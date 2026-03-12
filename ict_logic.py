@@ -24,34 +24,61 @@ class ICTLogic:
 
     def find_order_blocks(self, df):
         """
-        Identifies Order Blocks based on strong engulfing movements.
+        Identifies Order Blocks based on strong engulfing movements. 
+        Requires the move to be significant (expansion).
         """
         obs = []
-        for i in range(1, len(df)):
+        for i in range(2, len(df)):
             prev_row = df.iloc[i-1]
             curr_row = df.iloc[i]
             
+            # Simple Expansion Check: Was there a Break of Structure or Sweep?
+            # We'll approximate this by checking if curr_row breaks previous candle's High/Low 
+            # and is substantially larger.
+            
             # Bullish OB: Previous candle negative, current positive and strong
             if prev_row['Close'] < prev_row['Open'] and curr_row['Close'] > curr_row['Open']:
-                if (curr_row['Close'] - curr_row['Open']) > (prev_row['Open'] - prev_row['Close']) * 2:
+                # Relaxed Expansion: 1.2x size of prev candle AND breaks prev candle High
+                if (curr_row['Close'] - curr_row['Open']) > (prev_row['Open'] - prev_row['Close']) * 1.2 \
+                   and curr_row['Close'] > prev_row['High']:
                     obs.append({
+                        'id': f"OB_{df.index[i-1]}",
                         'type': 'bullish',
-                        'top': float(prev_row['High']),
+                        'top': float(prev_row['Open']),
                         'bottom': float(prev_row['Low']),
                         'timestamp': df.index[i-1],
-                        'mitigated': False
+                        'mitigated': False,
+                        'invalid': False
                     })
                     
             # Bearish OB: Previous candle positive, current negative and strong
             elif prev_row['Close'] > prev_row['Open'] and curr_row['Close'] < curr_row['Open']:
-                if (curr_row['Open'] - curr_row['Close']) > (prev_row['Close'] - prev_row['Open']) * 2:
+                # Relaxed Expansion: 1.2x size of prev candle AND breaks prev candle Low
+                if (curr_row['Open'] - curr_row['Close']) > (prev_row['Close'] - prev_row['Open']) * 1.2 \
+                   and curr_row['Close'] < prev_row['Low']:
                     obs.append({
+                        'id': f"OB_{df.index[i-1]}",
                         'type': 'bearish',
                         'top': float(prev_row['High']),
-                        'bottom': float(prev_row['Low']),
+                        'bottom': float(prev_row['Open']),
                         'timestamp': df.index[i-1],
-                        'mitigated': False
+                        'mitigated': False,
+                        'invalid': False
                     })
+        return obs
+
+    def invalidate_obs(self, obs, row):
+        """
+        Invalidates OBs if price closes beyond them.
+        """
+        for ob in obs:
+            if ob['mitigated'] or ob['invalid']:
+                continue
+            
+            if ob['type'] == 'bullish' and row['Close'] < ob['bottom']:
+                ob['invalid'] = True
+            elif ob['type'] == 'bearish' and row['Close'] > ob['top']:
+                ob['invalid'] = True
         return obs
 
     def detect_fvg(self, df):
@@ -81,31 +108,25 @@ class ICTLogic:
     def get_erl_irl_bias(self, obs, fvgs, current_price):
         """
         Calculates bias based on ERL to IRL cycle.
-        Price moves from ERL (Pools/OBs) to IRL (FVGs).
+        Relaxed: Allows bias if price is near an OB (within 1% range).
         """
-        # Logic: If current price is near an ERL (OB), the target is the nearest IRL (FVG).
         bias = "Neutral"
         target = None
         
-        # Simple distance logic
         for ob in obs:
-            if not ob['mitigated']:
-                if ob['type'] == 'bullish' and current_price <= ob['top']:
-                    bias = "Bullish (ERL Rebound)"
-                    # Target nearest Bearish FVG
-                    for fvg in fvgs:
-                        if fvg['type'] == 'bearish' and fvg['bottom'] > current_price:
-                            target = fvg['bottom']
-                            break
-                    break
-                elif ob['type'] == 'bearish' and current_price >= ob['bottom']:
-                    bias = "Bearish (ERL Rebound)"
-                    # Target nearest Bullish FVG
-                    for fvg in fvgs:
-                        if fvg['type'] == 'bullish' and fvg['top'] < current_price:
-                            target = fvg['top']
-                            break
-                    break
+            if not ob['mitigated'] and not ob['invalid']:
+                # Bullish Bias: Price near or in bullish OB
+                if ob['type'] == 'bullish':
+                    dist = (current_price - ob['top']) / ob['top']
+                    if dist <= 0.01: # Within 1% above or inside
+                        bias = "Bullish (ERL Rebound)"
+                        break
+                # Bearish Bias: Price near or in bearish OB
+                elif ob['type'] == 'bearish':
+                    dist = (ob['bottom'] - current_price) / ob['bottom']
+                    if dist <= 0.01: # Within 1% below or inside
+                        bias = "Bearish (ERL Rebound)"
+                        break
         return bias, target
 
 if __name__ == "__main__":
