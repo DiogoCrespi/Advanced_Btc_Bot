@@ -47,13 +47,25 @@ class RiskManager:
     def check_liquidation_risk(self, entry_price, current_price, leverage=1.0):
         """
         Monitora o risco de liquidação da perna Short.
-        Com 1x alavancagem, o preço de liquidação é aprox o dobro do preço de entrada.
         """
-        # Preço de liquidação aproximado para Short 1x com margem isolada:
-        # P_liq = Entry * (1 + 1/Leverage)
-        liquidation_price = entry_price * (1 + 1/leverage)
+        # COIN-M (Inverse) Short 1x: O risco de liquidação é matematicamente zero 
+        # porque o valor do colateral (BTC) sobe junto com o prejuízo do Short.
+        if leverage <= 1.0:
+            return 1.0, 999999999 # Distância infinita, Preço de liq inalcançável
+            
+        liquidation_price = entry_price * (leverage / (leverage - 1))
         distance = (liquidation_price - current_price) / current_price
         return distance, liquidation_price
+
+    def calculate_coin_m_pnl(self, entry_price, exit_price, qty_usd):
+        """
+        Calcula o P&L de um contrato Inverse (COIN-M).
+        Formula: Qty_USD * (1/Entry - 1/Exit)
+        Retorna o lucro no ATIVO (ex: em BTC).
+        """
+        if entry_price == 0 or exit_price == 0: return 0
+        pnl_asset = qty_usd * (1/entry_price - 1/exit_price)
+        return pnl_asset
 
     def rebalance_margin(self, spot_balance, futures_margin, threshold=0.10):
         """

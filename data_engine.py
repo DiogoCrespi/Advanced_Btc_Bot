@@ -11,6 +11,31 @@ class DataEngine:
         self.period = period
         self.interval = interval
         self.funding_url = "https://fapi.binance.com/fapi/v1/fundingRate"
+        self.dapi_url = "https://dapi.binance.com/dapi/v1"
+
+    def fetch_delivery_klines(self, symbol, interval="1h", limit=1000):
+        """
+        Busca klines históricos de um contrato de entrega.
+        """
+        print(f"Fetching Delivery klines for {symbol}...")
+        try:
+            url = f"{self.dapi_url}/klines"
+            params = {"symbol": symbol, "interval": interval, "limit": limit}
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            df = pd.DataFrame(data, columns=[
+                'open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'base_volume', 'count', 'taker_buy_volume',
+                'taker_buy_base_volume', 'ignore'
+            ])
+            df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+            df['close'] = df['close'].astype(float)
+            df.set_index('open_time', inplace=True)
+            return df[['close']]
+        except Exception as e:
+            print(f"Exception fetching delivery klines: {e}")
+            return pd.DataFrame()
 
     def fetch_data(self):
         """
@@ -60,9 +85,6 @@ class DataEngine:
                 df_batch = pd.DataFrame(data)
                 all_funding.append(df_batch)
                 
-                # O endpoint retorna do mais antigo para o mais novo? 
-                # Se não passar startTime, ele retorna os últimos? 
-                # Na verdade, se passar startTime ele retorna cronológico.
                 # Para paginar: o próximo startTime é o tempo do último record + 1ms
                 current_start = int(df_batch['fundingTime'].iloc[-1]) + 1
             except Exception as e:
@@ -78,6 +100,71 @@ class DataEngine:
         df['fundingRate'] = df['fundingRate'].astype(float)
         df.set_index('fundingTime', inplace=True)
         return df[['fundingRate']]
+
+    def fetch_delivery_contracts(self, asset="BTC"):
+        """
+        Retorna todos os contratos de entrega (Quarterly) ativos para um ativo.
+        """
+        print(f"Fetching Delivery contracts for {asset}...")
+        try:
+            url = f"{self.dapi_url}/exchangeInfo"
+            response = requests.get(url)
+            data = response.json()
+            symbols = data.get('symbols', [])
+            
+            # Filtrar contratos CURRENT QUARTER ou NEXT QUARTER
+            # Geralmente possuem formato BTCUSD_210625
+            quarterly_contracts = [
+                s for s in symbols 
+                if s['baseAsset'] == asset and s['contractType'] in ['CURRENT_QUARTER', 'NEXT_QUARTER']
+            ]
+            return quarterly_contracts
+        except Exception as e:
+            print(f"Exception fetching delivery contracts: {e}")
+            return []
+
+    def fetch_basis_data(self, spot_symbol="BTCUSDT", delivery_symbol="BTCUSD_250627"):
+        """
+        Calcula o diferencial (Basis) entre Spot e Futuro de Entrega.
+        """
+        try:
+            # 1. Preço Spot (do Ticker comum da Binance)
+            spot_url = "https://api.binance.com/api/v3/ticker/price"
+            spot_resp = requests.get(spot_url, params={"symbol": spot_symbol})
+            spot_data = spot_resp.json()
+            if 'price' not in spot_data:
+                print(f"Error fetching spot: {spot_data}")
+                return None
+            spot_price = float(spot_data['price'])
+            
+            # 2. Preço Delivery
+            delivery_url = f"{self.dapi_url}/ticker/bookTicker"
+            delivery_resp = requests.get(delivery_url, params={"symbol": delivery_symbol})
+            delivery_data = delivery_resp.json()
+            
+            # Binance DAPI pode retornar uma lista de 1 elemento
+            if isinstance(delivery_data, list):
+                delivery_data = delivery_data[0]
+                
+            if 'bidPrice' not in delivery_data:
+                print(f"Error fetching delivery: {delivery_data}")
+                return None
+                
+            # Usamos o bid para simular o preço de venda do short
+            delivery_price = float(delivery_data['bidPrice'])
+            
+            basis = delivery_price - spot_price
+            premium_pct = (delivery_price / spot_price) - 1
+            
+            return {
+                'spot': spot_price,
+                'future': delivery_price,
+                'basis': basis,
+                'premium_pct': premium_pct
+            }
+        except Exception as e:
+            print(f"Exception fetching basis data: {e}")
+            return None
 
     def apply_indicators(self, df):
         """
