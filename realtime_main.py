@@ -1,114 +1,138 @@
 from data_engine import DataEngine
-from ml_engine import MLEngine
-from ict_logic import ICTLogic
-from time_filters import TimeFilters
+from basis_logic import BasisLogic
 from risk_manager import RiskManager
-from binance_ws import BinanceWS
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import time
 import os
+import time
+from datetime import datetime
+import json
+import threading
+from fastapi import FastAPI
+import uvicorn
 
-class RealtimeBtcBot:
-    def __init__(self, symbol="btcusdt"):
-        self.symbol = symbol
-        self.data_engine = DataEngine()
-        self.ml_engine = MLEngine()
-        self.ict_logic = ICTLogic()
-        self.time_filters = TimeFilters()
-        self.risk_manager = RiskManager()
-        
-        self.df = None
-        self.is_trained = False
-        self.last_candle_time = 0
-        
-        # Buffer for live data
-        self.current_live_price = 0
+# FastAPI Instance
+app = FastAPI()
+# Shared state for API
+shared_bot_state = {
+    "status": "initializing",
+    "strategy": "Basis Arbitrage COIN-M",
+    "active_position": None,
+    "last_update": None
+}
 
-    def warm_up(self):
-        """
-        Fetches historical data to warm up indicators and train ML.
-        """
-        print("Warming up with historical data...")
-        df_btc, df_eth = self.data_engine.fetch_data()
-        df_btc = self.data_engine.apply_indicators(df_btc)
-        df_btc = self.data_engine.check_smt_divergence(df_btc, df_eth)
-        self.df = df_btc
-        
-        print(f"Data warmed up: {len(self.df)} periods.")
+@app.get("/api/v1/crypto-vault/status")
+def get_status():
+    return shared_bot_state
 
-        # Train ML
-        print("Training ML model on historical data...")
-        seqs, lbls = self.ml_engine.prepare_data(self.df['Log_Returns'].dropna())
-        self.ml_engine.train_model(seqs, lbls, epochs=2)
-        self.is_trained = True
-        print("ML Model trained and ready.")
+class BasisArbRealtime:
+    def __init__(self, asset="BTC", threshold_annual_yield=0.08):
+        self.asset = asset
+        self.threshold = threshold_annual_yield
+        self.engine = DataEngine()
+        self.logic = BasisLogic()
+        self.risk = RiskManager()
+        
+        self.state_file = "state.json"
+        self.active_position = self.load_state()
 
-    def process_tick(self, ticker):
-        """
-        Callback for BinanceWS. Processes each real-time price tick.
-        """
-        self.current_live_price = ticker['price']
-        curr_time = datetime.fromtimestamp(ticker['time'] / 1000)
-        
-        # Check if we have a new day/period (simplified to every update for testing)
-        # In a real bot, we'd wait for a new 1h/4h/1d candle.
-        
-        # Execute logic
-        self.run_logic(curr_time)
+    def load_state(self):
+        if os.path.exists(self.state_file):
+            with open(self.state_file, 'r') as f:
+                return json.load(f)
+        return None
 
-    def run_logic(self, curr_time):
-        """
-        Main decision engine based on the current live price.
-        """
-        if self.df is None or not self.is_trained:
-            return
+    def save_state(self, state):
+        with open(self.state_file, 'w') as f:
+            json.dump(state, f)
 
-        # 1. Update current bias relative to Open
-        true_open = self.time_filters.get_true_open(self.df, curr_time)
-        bias_rel_open = self.time_filters.get_price_bias_relative_to_open(self.current_live_price, true_open)
+    def run_loop(self):
+        print(f"[{datetime.now()}] Starting Basis Arb Real-time Engine...")
+        print(f"Target Asset: {self.asset} | Entry Threshold: {self.threshold*100}%")
+
+        while True:
+            try:
+                if not self.active_position:
+                    self.check_for_opportunities()
+                else:
+                    self.monitor_position()
+                
+                # Update Shared State for API
+                shared_bot_state["active_position"] = self.active_position
+                shared_bot_state["status"] = "running"
+                shared_bot_state["last_update"] = str(datetime.now())
+
+                time.sleep(60) # Checar a cada minuto
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                time.sleep(10)
+
+    def check_for_opportunities(self):
+        # 1. Buscar contratos
+        contracts = self.engine.fetch_delivery_contracts(asset=self.asset)
         
-        # 2. Check Killzone
-        killzone = self.time_filters.is_killzone(curr_time)
+        results = []
+        for c in contracts:
+            symbol = c['symbol']
+            # Para o Basis, comparamos o Spot (USDT) com o Futuro de Entrega (USD)
+            data = self.engine.fetch_basis_data(spot_symbol=f"{self.asset}USDT", delivery_symbol=symbol)
+            if data:
+                expiry = self.logic.parse_expiry(symbol)
+                y = self.logic.calculate_annualized_yield(data['spot'], data['future'], expiry)
+                results.append({**data, 'symbol': symbol, 'yield': y, 'expiry_date': str(expiry)})
         
-        # 3. ICT/SMC Filters
-        obs = self.ict_logic.find_order_blocks(self.df)
-        fvgs = self.ict_logic.detect_fvg(self.df)
-        ict_bias, ict_target = self.ict_logic.get_erl_irl_bias(obs, fvgs, self.current_live_price)
+        best = self.logic.get_best_contract(results)
         
-        # 4. ML Prediction (on latest data)
-        last_seq = self.df['Log_Returns'].tail(60).values
-        pred_log_ret = 0
-        if len(last_seq) == 60:
-            pred_log_ret = self.ml_engine.predict(last_seq)
-            
-        # 5. Signal Convergence
-        status_msg = f"[{curr_time}] PRICE: {self.current_live_price} | ZONE: {killzone if killzone else 'DeadZone'} | ICT: {ict_bias} | ML: {pred_log_ret:.6f}"
-        print(status_msg)
-        
-        if killzone in ['London', 'NY']:
-            if bias_rel_open == "Discount (Buy Zone)" and "Bullish" in ict_bias and pred_log_ret > 0:
-                print(f">>> SIGNAL: BULLISH CONVERGENCE detected at {self.current_live_price}")
-            elif bias_rel_open == "Premium (Sell Zone)" and "Bearish" in ict_bias and pred_log_ret < 0:
-                print(f">>> SIGNAL: BEARISH CONVERGENCE detected at {self.current_live_price}")
+        if best and best['annualized_yield'] > self.threshold:
+            print(f">>> OPPORTUNITY DETECTED: {best['symbol']} | Yield: {best['annualized_yield']*100:.2f}%")
+            self.execute_entry(best)
         else:
-            # Low probability window
-            pass
+            current_best = f"{best['symbol']} ({best['annualized_yield']*100:.2f}%)" if best else "None"
+            print(f"[{datetime.now()}] Monitoring... Best: {current_best}")
 
-    def start(self):
-        self.warm_up()
-        print(f"Starting Real-time Monitoring for {self.symbol}...")
-        self.ws = BinanceWS(symbol=self.symbol, callback=self.process_tick)
-        self.ws.start()
+    def execute_entry(self, contract):
+        print(f"!!! EXECUTING ENTRY on {contract['symbol']} !!!")
+        # Em produção, aqui chamariam as APIs de Ordem (create_order)
+        # 1. Comprar Spot
+        # 2. Transferir para Margem COIN-M
+        # 3. Abrir Short 1x
         
-        try:
-            while True:
-                time.sleep(5) # Keep main thread alive
-        except KeyboardInterrupt:
-            print("Shutting down real-time bot...")
-            self.ws.stop()
+        self.active_position = {
+            'symbol': contract['symbol'],
+            'entry_spot': contract['spot'],
+            'entry_future': contract['future'],
+            'yield_locked': contract['yield'],
+            'entry_time': str(datetime.now())
+        }
+        self.save_state(self.active_position)
+        print("Position stored in state.json")
+
+    def monitor_position(self):
+        # Basis Arb é segurar até o vencimento ou até uma compressão prematura do spread
+        pos = self.active_position
+        
+        # Real-time check of current basis for the active position
+        data = self.engine.fetch_basis_data(spot_symbol=f"{self.asset}USDT", delivery_symbol=pos['symbol'])
+        current_yield = 0
+        if data:
+            expiry = self.logic.parse_expiry(pos['symbol'])
+            current_yield = self.logic.calculate_annualized_yield(data['spot'], data['future'], expiry)
+            
+        print(f"[{datetime.now()}] Holding {pos['symbol']} | Locked: {pos['yield_locked']*100:.2f}% | Current: {current_yield*100:.2f}%")
+        
+        # Update Shared State for API
+        shared_bot_state["active_position"]["current_spot"] = data['spot'] if data else pos['entry_spot']
+        shared_bot_state["active_position"]["current_future"] = data['future'] if data else pos['entry_future']
+        shared_bot_state["active_position"]["current_yield_apr"] = current_yield
+        
+        # Check for early exit or close to expiry logic here
+        pass
+
+def start_api():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    bot = RealtimeBtcBot()
-    bot.start()
+    # Start API in a separate thread
+    api_thread = threading.Thread(target=start_api, daemon=True)
+    api_thread.start()
+
+    bot = BasisArbRealtime()
+    bot.run_loop()
