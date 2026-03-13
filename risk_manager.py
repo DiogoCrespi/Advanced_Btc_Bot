@@ -43,3 +43,23 @@ class RiskManager:
         drawdown = (self.hwm - current_balance) / self.hwm
         if drawdown > self.max_drawdown:
             self.max_drawdown = drawdown
+
+    def check_liquidation_risk(self, entry_price, current_price, leverage=1.0):
+        """
+        Monitora o risco de liquidação da perna Short.
+        Com 1x alavancagem, o preço de liquidação é aprox o dobro do preço de entrada.
+        """
+        # Preço de liquidação aproximado para Short 1x com margem isolada:
+        # P_liq = Entry * (1 + 1/Leverage)
+        liquidation_price = entry_price * (1 + 1/leverage)
+        distance = (liquidation_price - current_price) / current_price
+        return distance, liquidation_price
+
+    def rebalance_margin(self, spot_balance, futures_margin, threshold=0.10):
+        """
+        Transfere lucro do Spot para Futuros para afastar a liquidação.
+        """
+        if spot_balance > futures_margin * (1 + threshold):
+            transfer = (spot_balance - futures_margin) / 2
+            return transfer
+        return 0

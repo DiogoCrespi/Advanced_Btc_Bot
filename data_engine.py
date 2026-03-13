@@ -1,6 +1,8 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests
+import time
 
 class DataEngine:
     def __init__(self, symbol="BTC-USD", secondary_symbol="ETH-USD", period="720d", interval="1h"):
@@ -8,6 +10,7 @@ class DataEngine:
         self.secondary_symbol = secondary_symbol
         self.period = period
         self.interval = interval
+        self.funding_url = "https://fapi.binance.com/fapi/v1/fundingRate"
 
     def fetch_data(self):
         """
@@ -27,12 +30,54 @@ class DataEngine:
         df_main.dropna(inplace=True)
         df_sec.dropna(inplace=True)
         
-        # Align dataframes to ensure SMT works on the same indices
+        # Align dataframes
         combined = pd.concat([df_main, df_sec], axis=1, keys=['main', 'sec'], join='inner')
         df_main = combined['main']
         df_sec = combined['sec']
         
         return df_main, df_sec
+
+    def fetch_funding_history(self, symbol="BTCUSDT", startTime=None, limit=1000):
+        """
+        Busca o histórico de Funding Rates da Binance Futures de forma paginada para obter mais dados.
+        """
+        all_funding = []
+        current_start = startTime
+        
+        # Binance permite buscar blocos de 1000. Vamos tentar buscar até 5 blocos (5000 records ~ 4.5 anos)
+        for _ in range(5):
+            print(f"Fetching funding batch for {symbol} (start: {current_start})...")
+            params = {"symbol": symbol, "limit": 1000}
+            if current_start:
+                params["startTime"] = int(current_start)
+                
+            try:
+                response = requests.get(self.funding_url, params=params)
+                data = response.json()
+                if not isinstance(data, list) or not data:
+                    break
+                    
+                df_batch = pd.DataFrame(data)
+                all_funding.append(df_batch)
+                
+                # O endpoint retorna do mais antigo para o mais novo? 
+                # Se não passar startTime, ele retorna os últimos? 
+                # Na verdade, se passar startTime ele retorna cronológico.
+                # Para paginar: o próximo startTime é o tempo do último record + 1ms
+                current_start = int(df_batch['fundingTime'].iloc[-1]) + 1
+            except Exception as e:
+                print(f"Exception fetching funding batch: {e}")
+                break
+        
+        if not all_funding:
+            return pd.DataFrame()
+            
+        df = pd.concat(all_funding).drop_duplicates('fundingTime')
+        df['fundingTime'] = pd.to_datetime(df['fundingTime'], unit='ms')
+        df['fundingTime'] = df['fundingTime'].dt.round('h')
+        df['fundingRate'] = df['fundingRate'].astype(float)
+        df.set_index('fundingTime', inplace=True)
+        return df[['fundingRate']]
 
     def apply_indicators(self, df):
         """
