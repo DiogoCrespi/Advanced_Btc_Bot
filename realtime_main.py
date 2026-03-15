@@ -8,16 +8,29 @@ import json
 import threading
 from fastapi import FastAPI
 import uvicorn
+from collections import deque
 
 # FastAPI Instance
 app = FastAPI()
+
 # Shared state for API
 shared_bot_state = {
     "status": "initializing",
     "strategy": "Basis Arbitrage COIN-M",
     "active_position": None,
-    "last_update": None
+    "last_update": None,
+    "logs": []
 }
+
+MAX_LOGS = 50
+bot_logs = deque(maxlen=MAX_LOGS)
+
+def log_event(message):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    formatted_msg = f"[{timestamp}] {message}"
+    print(formatted_msg)
+    bot_logs.append(formatted_msg)
+    shared_bot_state["logs"] = list(bot_logs)
 
 @app.get("/api/v1/crypto-vault/status")
 def get_status():
@@ -36,8 +49,11 @@ class BasisArbRealtime:
 
     def load_state(self):
         if os.path.exists(self.state_file):
-            with open(self.state_file, 'r') as f:
-                return json.load(f)
+            try:
+                with open(self.state_file, 'r') as f:
+                    return json.load(f)
+            except:
+                return None
         return None
 
     def save_state(self, state):
@@ -45,8 +61,8 @@ class BasisArbRealtime:
             json.dump(state, f)
 
     def run_loop(self):
-        print(f"[{datetime.now()}] Starting Basis Arb Real-time Engine...")
-        print(f"Target Asset: {self.asset} | Entry Threshold: {self.threshold*100}%")
+        log_event(f"Starting Basis Arb Real-time Engine...")
+        log_event(f"Target Asset: {self.asset} | Entry Threshold: {self.threshold*100}%")
 
         while True:
             try:
@@ -62,7 +78,7 @@ class BasisArbRealtime:
 
                 time.sleep(60) # Checar a cada minuto
             except Exception as e:
-                print(f"Error in main loop: {e}")
+                log_event(f"Error in main loop: {e}")
                 time.sleep(10)
 
     def check_for_opportunities(self):
@@ -72,7 +88,6 @@ class BasisArbRealtime:
         results = []
         for c in contracts:
             symbol = c['symbol']
-            # Para o Basis, comparamos o Spot (USDT) com o Futuro de Entrega (USD)
             data = self.engine.fetch_basis_data(spot_symbol=f"{self.asset}USDT", delivery_symbol=symbol)
             if data:
                 expiry = self.logic.parse_expiry(symbol)
@@ -82,18 +97,14 @@ class BasisArbRealtime:
         best = self.logic.get_best_contract(results)
         
         if best and best['annualized_yield'] > self.threshold:
-            print(f">>> OPPORTUNITY DETECTED: {best['symbol']} | Yield: {best['annualized_yield']*100:.2f}%")
+            log_event(f">>> OPPORTUNITY DETECTED: {best['symbol']} | Yield: {best['annualized_yield']*100:.2f}%")
             self.execute_entry(best)
         else:
             current_best = f"{best['symbol']} ({best['annualized_yield']*100:.2f}%)" if best else "None"
-            print(f"[{datetime.now()}] Monitoring... Best: {current_best}")
+            log_event(f"Monitoring... Best: {current_best}")
 
     def execute_entry(self, contract):
-        print(f"!!! EXECUTING ENTRY on {contract['symbol']} !!!")
-        # Em produção, aqui chamariam as APIs de Ordem (create_order)
-        # 1. Comprar Spot
-        # 2. Transferir para Margem COIN-M
-        # 3. Abrir Short 1x
+        log_event(f"!!! EXECUTING ENTRY on {contract['symbol']} !!!")
         
         self.active_position = {
             'symbol': contract['symbol'],
@@ -103,31 +114,56 @@ class BasisArbRealtime:
             'entry_time': str(datetime.now())
         }
         self.save_state(self.active_position)
-        print("Position stored in state.json")
+        log_event("Position stored in state.json")
 
     def monitor_position(self):
-        # Basis Arb é segurar até o vencimento ou até uma compressão prematura do spread
         pos = self.active_position
         
-        # Real-time check of current basis for the active position
+        # Always parse expiry from symbol even if API fails (e.g. delisted)
+        expiry_date = self.logic.parse_expiry(pos['symbol'])
+        
         data = self.engine.fetch_basis_data(spot_symbol=f"{self.asset}USDT", delivery_symbol=pos['symbol'])
         current_yield = 0
+        
         if data:
-            expiry = self.logic.parse_expiry(pos['symbol'])
-            current_yield = self.logic.calculate_annualized_yield(data['spot'], data['future'], expiry)
+            current_yield = self.logic.calculate_annualized_yield(data['spot'], data['future'], expiry_date)
             
-        print(f"[{datetime.now()}] Holding {pos['symbol']} | Locked: {pos['yield_locked']*100:.2f}% | Current: {current_yield*100:.2f}%")
+        log_event(f"Holding {pos['symbol']} | Locked: {pos['yield_locked']*100:.2f}% | Current: {current_yield*100:.2f}%")
         
-        # Update Shared State for API
-        shared_bot_state["active_position"]["current_spot"] = data['spot'] if data else pos['entry_spot']
-        shared_bot_state["active_position"]["current_future"] = data['future'] if data else pos['entry_future']
-        shared_bot_state["active_position"]["current_yield_apr"] = current_yield
+        # Update Shared State for API (Ensure we update the global dict)
+        shared_bot_state["active_position"] = pos
+        if data:
+            shared_bot_state["active_position"]["current_spot"] = data['spot']
+            shared_bot_state["active_position"]["current_future"] = data['future']
+            shared_bot_state["active_position"]["current_yield_apr"] = current_yield
+
+        # =========================================================
+        # AUTOMATION: Expiry Detection (The Reinvestment Trigger)
+        # =========================================================
+        now = datetime.now()
+        # Ensure we are comparing same types (naive vs naive)
+        if expiry_date:
+            expiry_naive = expiry_date.replace(tzinfo=None)
+            now_naive = now.replace(tzinfo=None)
+            
+            if now_naive >= expiry_naive:
+                log_event(f">>> 🚨 CONTRACT EXPIRED ({pos['symbol']})! Mathematical convergence reached.")
+                self.execute_exit(reason="Contract Expiry - Ready to Reinvest")
+
+    def execute_exit(self, reason):
+        log_event(f"!!! CLOSING POSITION !!! Reason: {reason}")
         
-        # Check for early exit or close to expiry logic here
-        pass
+        # Clear local and shared state
+        self.active_position = None
+        shared_bot_state["active_position"] = None
+        
+        if os.path.exists(self.state_file):
+            os.remove(self.state_file)
+            
+        log_event("✅ Position cleared. Bot returning to scanning mode for next opportunity...")
 
 def start_api():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
 
 if __name__ == "__main__":
     # Start API in a separate thread
