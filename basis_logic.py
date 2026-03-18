@@ -38,18 +38,26 @@ class BasisLogic:
     def get_best_contract(self, contracts_data):
         """
         Iterates over contracts and returns the one with the highest annualized yield.
-        contracts_data: list of dicts {symbol, spot, future, expiry}
         """
         best_yield = -1
         best_contract = None
         
         for c in contracts_data:
-            expiry = self.parse_expiry(c['symbol'])
-            if not expiry: continue
-            
-            y = self.calculate_annualized_yield(c['spot'], c['future'], expiry)
-            if y > best_yield:
-                best_yield = y
-                best_contract = {**c, 'annualized_yield': y, 'expiry_date': expiry}
+            if c['yield_apr'] > best_yield:
+                best_yield = c['yield_apr']
+                best_contract = c
                 
         return best_contract
+
+    def get_earliest_profitable_contract(self, contracts_data, threshold):
+        """
+        Returns the contract with the NEAREST expiry that is above the threshold.
+        Useful for "diminuir o tempo" (reducing duration).
+        """
+        # Sort by expiry date (expiry_date is a string in results, should be compared as date)
+        sorted_contracts = sorted(contracts_data, key=lambda x: x['expiry_date'])
+        
+        for c in sorted_contracts:
+            if c['yield_apr'] >= threshold:
+                return c
+        return None

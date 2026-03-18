@@ -125,24 +125,36 @@ class DataEngine:
 
     def fetch_basis_data(self, spot_symbol="BTCUSDT", delivery_symbol="BTCUSD_250627"):
         """
-        Calcula o diferencial (Basis) entre Spot e Futuro de Entrega.
+        Calculates the differential (Basis) between Spot and Delivery Future.
+        Supports BRL by converting spot to USD if necessary.
         """
         try:
-            # 1. Preço Spot (do Ticker comum da Binance)
+            # 1. Spot Price
             spot_url = "https://api.binance.com/api/v3/ticker/price"
             spot_resp = requests.get(spot_url, params={"symbol": spot_symbol})
             spot_data = spot_resp.json()
             if 'price' not in spot_data:
                 print(f"Error fetching spot: {spot_data}")
                 return None
-            spot_price = float(spot_data['price'])
+            spot_price_raw = float(spot_data['price'])
             
-            # 2. Preço Delivery
+            # 2. USDBRL Rate (if needed)
+            usd_brl = 1.0
+            if "BRL" in spot_symbol:
+                # Fetch USDTBRL as a proxy for USDBRL on Binance
+                fx_resp = requests.get(spot_url, params={"symbol": "USDTBRL"})
+                fx_data = fx_resp.json()
+                if 'price' in fx_data:
+                    usd_brl = float(fx_data['price'])
+            
+            # Normalize spot price to USD
+            spot_price_usd = spot_price_raw / usd_brl
+            
+            # 3. Delivery Price
             delivery_url = f"{self.dapi_url}/ticker/bookTicker"
             delivery_resp = requests.get(delivery_url, params={"symbol": delivery_symbol})
             delivery_data = delivery_resp.json()
             
-            # Binance DAPI pode retornar uma lista de 1 elemento
             if isinstance(delivery_data, list):
                 delivery_data = delivery_data[0]
                 
@@ -150,80 +162,91 @@ class DataEngine:
                 print(f"Error fetching delivery: {delivery_data}")
                 return None
                 
-            # Usamos o bid para simular o preço de venda do short
-            delivery_price = float(delivery_data['bidPrice'])
+            delivery_price_usd = float(delivery_data['bidPrice'])
             
-            basis = delivery_price - spot_price
-            premium_pct = (delivery_price / spot_price) - 1
+            basis_usd = delivery_price_usd - spot_price_usd
+            premium_pct = (delivery_price_usd / spot_price_usd) - 1
             
             return {
-                'spot': spot_price,
-                'future': delivery_price,
-                'basis': basis,
-                'premium_pct': premium_pct
+                'spot': spot_price_usd,
+                'spot_raw': spot_price_raw,
+                'future': delivery_price_usd,
+                'basis': basis_usd,
+                'premium_pct': premium_pct,
+                'fx_rate': usd_brl,
+                'currency': 'BRL' if 'BRL' in spot_symbol else 'USD'
             }
         except Exception as e:
             print(f"Exception fetching basis data: {e}")
             return None
 
+    def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000):
+        """
+        Fetches historical klines from Binance Spot API including Taker Volume.
+        """
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        print(f"Fetching Binance Klines for {symbol}...")
+        
+        try:
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            df = pd.DataFrame(data, columns=[
+                'open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'count', 
+                'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+            ])
+            
+            # Convert to numeric
+            cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
+            df[cols] = df[cols].apply(pd.to_numeric)
+            
+            df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+            df.set_index('open_time', inplace=True)
+            
+            # Calculate CVD (Cumulative Volume Delta)
+            # Buy Volume (Taker) - Sell Volume (Rest)
+            # Note: volume is total volume. taker_buy_base_volume is buy. 
+            # Sell = total - buy. 
+            # Delta = Buy - Sell = Buy - (Total - Buy) = 2*Buy - Total
+            df['buy_vol'] = df['taker_buy_base_volume']
+            df['sell_vol'] = df['volume'] - df['buy_vol']
+            df['delta'] = df['buy_vol'] - df['sell_vol']
+            df['CVD'] = df['delta'].cumsum()
+            
+            return df
+        except Exception as e:
+            print(f"Error fetching Binance Klines: {e}")
+            return pd.DataFrame()
+
     def apply_indicators(self, df):
         """
         Calculates log returns and mandatory technical indicators.
         """
-        # Log Returns: r_t = ln(P_t / P_{t-1})
-        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+        # Close column case sensitive check
+        close_col = 'close' if 'close' in df.columns else 'Close'
+        high_col = 'high' if 'high' in df.columns else 'High'
+        low_col = 'low' if 'low' in df.columns else 'Low'
+
+        # Log Returns
+        df['Log_Returns'] = np.log(df[close_col] / df[close_col].shift(1))
         
         # Moving Averages
-        df['SMA_50'] = df['Close'].rolling(window=50).mean()
-        df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+        df['SMA_50'] = df[close_col].rolling(window=50).mean()
+        df['EMA_21'] = df[close_col].ewm(span=21, adjust=False).mean()
         
-        # RSI (Relative Strength Index)
-        delta = df['Close'].diff()
+        # RSI
+        delta = df[close_col].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI_14'] = 100 - (100 / (1 + rs))
         
-        # MACD (Moving Average Convergence Divergence)
-        ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
-        ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = ema_12 - ema_26
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        
-        # ATR (Average True Range)
-        high_low = df['High'] - df['Low']
-        high_close = np.abs(df['High'] - df['Close'].shift())
-        low_close = np.abs(df['Low'] - df['Close'].shift())
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = np.max(ranges, axis=1)
-        df['ATR_14'] = true_range.rolling(window=14).mean()
-        
         return df
-
-    def check_smt_divergence(self, df_main, df_sec):
-        """
-        Implements SMT Divergence logic:
-        If BTC makes a LL and ETH makes a HL, or vice-versa.
-        """
-        # simplified lookback for SMT
-        df_main['SMT_Divergence'] = 0
-        
-        for i in range(1, len(df_main)):
-            # Bullish SMT: Main makes Lower Low, Sec makes Higher Low
-            if (df_main['Low'].iloc[i] < df_main['Low'].iloc[i-1]) and \
-               (df_sec['Low'].iloc[i] > df_sec['Low'].iloc[i-1]):
-                df_main.iloc[i, df_main.columns.get_loc('SMT_Divergence')] = 1
-                
-            # Bearish SMT: Main makes Higher High, Sec makes Lower High
-            elif (df_main['High'].iloc[i] > df_main['High'].iloc[i-1]) and \
-                 (df_sec['High'].iloc[i] < df_sec['High'].iloc[i-1]):
-                df_main.iloc[i, df_main.columns.get_loc('SMT_Divergence')] = -1
-        
-        return df_main
 
 if __name__ == "__main__":
     engine = DataEngine()
-    btc, eth = engine.fetch_data()
-    btc = engine.apply_indicators(btc)
-    btc = engine.check_smt_divergence(btc, eth)
-    print(btc.tail())
+    df = engine.fetch_binance_klines("BTCUSDT", interval="1h")
+    df = engine.apply_indicators(df)
+    print(df[['close', 'delta', 'CVD', 'RSI_14']].tail())

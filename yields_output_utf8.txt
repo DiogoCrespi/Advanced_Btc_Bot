@@ -1,0 +1,8 @@
+﻿Fetching Delivery contracts for BTC...
+
+=== TODOS OS CONTRATOS BTC/BRL ===
+       Symbol     Expiry  Yield (%)
+BTCUSD_260327 2026-03-27   3.837913
+BTCUSD_260626 2026-06-26   2.862625
+==================================
+
