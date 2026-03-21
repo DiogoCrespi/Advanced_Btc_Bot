@@ -17,5 +17,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia o código fonte do bot
 COPY . .
 
-# Executa o motor em tempo real
-CMD ["python", "realtime_main.py"]
+# Executa o bot mestre integrado
+CMD ["python", "multicore_master_bot.py"]

@@ -1,6 +1,7 @@
 import requests
 import json
 import logging
+import os
 from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger('mirofish.client')
@@ -9,8 +10,9 @@ class MiroFishClient:
     """
     Client for interacting with the MiroFish REST API.
     """
-    def __init__(self, base_url: str = "http://localhost:5000/api"):
-        self.base_url = base_url
+    def __init__(self, base_url: Optional[str] = None):
+        # Fallback order: Argument -> Environment Var -> Default Localhost
+        self.base_url = base_url or os.getenv("MIROFISH_API_URL", "http://localhost:5000/api")
         self.timeout = 30
 
     def create_simulation(self, project_id: str, graph_id: Optional[str] = None) -> Dict[str, Any]:

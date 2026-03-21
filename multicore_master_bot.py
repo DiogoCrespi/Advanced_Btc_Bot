@@ -20,6 +20,19 @@ from logic.order_flow_logic import OrderFlowLogic
 # Forçar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Custom encoder for numpy data types """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
 class MulticoreMasterBot:
     def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08):
         self.assets = assets
@@ -44,7 +57,7 @@ class MulticoreMasterBot:
         self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
         
         # MiroFish Settings
-        self.mf_client = MiroFishClient(base_url="http://localhost:5000/api")
+        self.mf_client = MiroFishClient()
         self.mf_project_id = "trading_sentiment_auto"
         self.mf_simulation_id = None # To be updated dynamically
         
@@ -109,7 +122,7 @@ class MulticoreMasterBot:
                 "positions": self.positions
             }
             with open(self.status_file, "w") as f:
-                json.dump(state, f, indent=4)
+                json.dump(state, f, indent=4, cls=NumpyEncoder)
         except Exception as e:
             print(f"Erro ao salvar estado: {e}")
 
@@ -146,9 +159,30 @@ class MulticoreMasterBot:
                 # Salva estado no inicio do loop
                 self.save_state()
                 
+                # Calculate Total Equity (Balance + current value of all open positions)
+                total_equity = self.balance
+                for p_asset in self.positions:
+                    p_pos = self.positions[p_asset]
+                    # Market value = trade_amount + (trade_amount * pnl_pct)
+                    p_entry_val = self.trade_amount 
+                    p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
+                    p_market_val = p_entry_val * (1 + p_pnl_pct)
+                    total_equity += p_market_val
+
                 print(f"+{'-'*72}+")
-                print(f"| >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Saldo: R$ {self.balance:8.2f} |")
+                print(f"| >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Equity: R$ {total_equity:9.2f} |")
+                print(f"| Saldo Disponivel: R$ {self.balance:8.2f}  | Posicoes Abertas: {len(self.positions):2}         |")
                 print(f"+{'-'*72}+")
+                
+                # TIER 1: PORTFOLIO
+                if self.positions:
+                    print(f"| [PORTFOLIO] Ativos em Carteira:                                        |")
+                    for p_asset, p_pos in self.positions.items():
+                        p_side = "COMPRA" if p_pos['signal'] == 1 else "VENDA "
+                        p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
+                        p_val_brl = self.trade_amount * (1 + p_pnl_pct)
+                        print(f"|    {p_asset:9}: {p_pos['qty']:10.6f} {p_side} | Valor: R$ {p_val_brl:8.2f} | PnL: {p_pnl_pct:+.2%} |")
+                    print(f"+{'-'*72}+")
                 
                 # TIER 1: COFRE
                 contracts = self.engine.fetch_delivery_contracts(asset="BTC")
@@ -196,7 +230,7 @@ class MulticoreMasterBot:
                             total_trade_fee = self.fee_rate * 2
                             net_pnl_pct = trade_pnl - total_trade_fee
                             profit_brl = self.trade_amount * net_pnl_pct
-                            self.balance += profit_brl
+                            self.balance += (self.trade_amount + profit_brl) # Retorna capital + lucro
                             self.save_balance()
                             log_exit = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL Liquid: {net_pnl_pct:+.2%} | Saldo: R$ {self.balance:.2f}"
                             self.history_log.insert(0, log_exit)
