@@ -125,7 +125,7 @@ class OrderFlowLogic:
 
 if __name__ == "__main__":
     # Test with dummy data or real data
-    from data_engine import DataEngine
+    from data.data_engine import DataEngine
     engine = DataEngine()
     df = engine.fetch_binance_klines("BTCUSDT", interval="1h")
     

@@ -12,8 +12,8 @@ class StatArbLogic:
         """
         df, _ = df_btc.align(df_eth, join='inner', axis=0)
         
-        log_btc = np.log(df_btc['Close'])
-        log_eth = np.log(df_eth['Close'])
+        log_btc = np.log(df_btc['close'])
+        log_eth = np.log(df_eth['close'])
         
         # Cálculo do Hedge Ratio (Beta) via Rolagem: Covariância / Variância
         cov = log_btc.rolling(window=self.window).cov(log_eth)
