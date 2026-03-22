@@ -1,0 +1,286 @@
+{
+  "date": "2026-03-13T12:59:55.943Z",
+  "economy": {
+    "dollar": 5.238,
+    "selic": 15
+  },
+  "type": "fixed",
+  "items": {
+    "tesouro": [
+      {
+        "name": "Tesouro Prefixado 2029",
+        "rate": "13,55%",
+        "minInvest": "R$ 7,02",
+        "price": "R$ 702,94",
+        "maturity": "01/01/2029"
+      },
+      {
+        "name": "Tesouro Prefixado 2032",
+        "rate": "13,99%",
+        "minInvest": "R$ 4,70",
+        "price": "R$ 470,26",
+        "maturity": "01/01/2032"
+      },
+      {
+        "name": "Tesouro Prefixado 2037Juros\n                                                                            Semestrais",
+        "rate": "14,05%",
+        "minInvest": "R$ 8,10",
+        "price": "R$ 810,21",
+        "maturity": "01/01/2037"
+      },
+      {
+        "name": "Tesouro Selic 2031",
+        "rate": "SELIC + 0,0974%",
+        "minInvest": "R$ 185,02",
+        "price": "R$ 18.502,30",
+        "maturity": "01/03/2031"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2030",
+        "rate": "IPCA + 7,37%",
+        "minInvest": "R$ 18,97",
+        "price": "R$ 1.897,21",
+        "maturity": "15/12/2049"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2035",
+        "rate": "IPCA + 7,18%",
+        "minInvest": "R$ 13,71",
+        "price": "R$ 1.371,75",
+        "maturity": "15/12/2054"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2040",
+        "rate": "IPCA + 7,05%",
+        "minInvest": "R$ 9,97",
+        "price": "R$ 997,47",
+        "maturity": "15/12/2059"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2045",
+        "rate": "IPCA + 6,98%",
+        "minInvest": "R$ 7,23",
+        "price": "R$ 723,49",
+        "maturity": "15/12/2064"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2050",
+        "rate": "IPCA + 6,95%",
+        "minInvest": "R$ 5,21",
+        "price": "R$ 521,96",
+        "maturity": "15/12/2069"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2055",
+        "rate": "IPCA + 6,96%",
+        "minInvest": "R$ 3,72",
+        "price": "R$ 372,50",
+        "maturity": "15/12/2074"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2060",
+        "rate": "IPCA + 6,97%",
+        "minInvest": "R$ 2,65",
+        "price": "R$ 265,57",
+        "maturity": "15/12/2079"
+      },
+      {
+        "name": "Tesouro Renda+ Aposentadoria Extra 2065",
+        "rate": "IPCA + 6,97%",
+        "minInvest": "R$ 1,90",
+        "price": "R$ 190,01",
+        "maturity": "15/12/2084"
+      },
+      {
+        "name": "Tesouro Educa+ 2027",
+        "rate": "IPCA + 8,00%",
+        "minInvest": "R$ 36,24",
+        "price": "R$ 3.624,81",
+        "maturity": "15/12/2031"
+      },
+      {
+        "name": "Tesouro Educa+ 2028",
+        "rate": "IPCA + 7,94%",
+        "minInvest": "R$ 33,65",
+        "price": "R$ 3.365,47",
+        "maturity": "15/12/2032"
+      },
+      {
+        "name": "Tesouro Educa+ 2029",
+        "rate": "IPCA + 7,89%",
+        "minInvest": "R$ 31,26",
+        "price": "R$ 3.126,73",
+        "maturity": "15/12/2033"
+      },
+      {
+        "name": "Tesouro Educa+ 2030",
+        "rate": "IPCA + 7,84%",
+        "minInvest": "R$ 29,07",
+        "price": "R$ 2.907,05",
+        "maturity": "15/12/2034"
+      },
+      {
+        "name": "Tesouro Educa+ 2031",
+        "rate": "IPCA + 7,77%",
+        "minInvest": "R$ 27,09",
+        "price": "R$ 2.709,00",
+        "maturity": "15/12/2035"
+      },
+      {
+        "name": "Tesouro Educa+ 2032",
+        "rate": "IPCA + 7,70%",
+        "minInvest": "R$ 25,27",
+        "price": "R$ 2.527,91",
+        "maturity": "15/12/2036"
+      },
+      {
+        "name": "Tesouro Educa+ 2033",
+        "rate": "IPCA + 7,63%",
+        "minInvest": "R$ 23,62",
+        "price": "R$ 2.362,17",
+        "maturity": "15/12/2037"
+      },
+      {
+        "name": "Tesouro Educa+ 2034",
+        "rate": "IPCA + 7,56%",
+        "minInvest": "R$ 22,10",
+        "price": "R$ 2.210,55",
+        "maturity": "15/12/2038"
+      },
+      {
+        "name": "Tesouro Educa+ 2035",
+        "rate": "IPCA + 7,49%",
+        "minInvest": "R$ 20,71",
+        "price": "R$ 2.071,30",
+        "maturity": "15/12/2039"
+      },
+      {
+        "name": "Tesouro Educa+ 2036",
+        "rate": "IPCA + 7,43%",
+        "minInvest": "R$ 19,40",
+        "price": "R$ 1.940,71",
+        "maturity": "15/12/2040"
+      },
+      {
+        "name": "Tesouro Educa+ 2037",
+        "rate": "IPCA + 7,37%",
+        "minInvest": "R$ 18,20",
+        "price": "R$ 1.820,33",
+        "maturity": "15/12/2041"
+      },
+      {
+        "name": "Tesouro Educa+ 2038",
+        "rate": "IPCA + 7,31%",
+        "minInvest": "R$ 17,09",
+        "price": "R$ 1.709,34",
+        "maturity": "15/12/2042"
+      },
+      {
+        "name": "Tesouro Educa+ 2039",
+        "rate": "IPCA + 7,26%",
+        "minInvest": "R$ 16,04",
+        "price": "R$ 1.604,51",
+        "maturity": "15/12/2043"
+      },
+      {
+        "name": "Tesouro Educa+ 2040",
+        "rate": "IPCA + 7,21%",
+        "minInvest": "R$ 15,07",
+        "price": "R$ 1.507,64",
+        "maturity": "15/12/2044"
+      },
+      {
+        "name": "Tesouro Educa+ 2041",
+        "rate": "IPCA + 7,17%",
+        "minInvest": "R$ 14,15",
+        "price": "R$ 1.415,78",
+        "maturity": "15/12/2045"
+      },
+      {
+        "name": "Tesouro Educa+ 2042",
+        "rate": "IPCA + 7,13%",
+        "minInvest": "R$ 13,30",
+        "price": "R$ 1.330,60",
+        "maturity": "15/12/2046"
+      },
+      {
+        "name": "Tesouro IPCA+ 2040",
+        "rate": "IPCA + 7,30%",
+        "minInvest": "R$ 16,87",
+        "price": "R$ 1.687,08",
+        "maturity": "15/08/2040"
+      },
+      {
+        "name": "Tesouro Educa+ 2043",
+        "rate": "IPCA + 7,10%",
+        "minInvest": "R$ 12,49",
+        "price": "R$ 1.249,36",
+        "maturity": "15/12/2047"
+      },
+      {
+        "name": "Tesouro IPCA+ 2050",
+        "rate": "IPCA + 6,98%",
+        "minInvest": "R$ 9,01",
+        "price": "R$ 901,16",
+        "maturity": "15/08/2050"
+      },
+      {
+        "name": "Tesouro IPCA+ 2032",
+        "rate": "IPCA + 7,85%",
+        "minInvest": "R$ 28,60",
+        "price": "R$ 2.860,43",
+        "maturity": "15/08/2032"
+      },
+      {
+        "name": "Tesouro Educa+ 2044",
+        "rate": "IPCA + 7,07%",
+        "minInvest": "R$ 11,73",
+        "price": "R$ 1.173,73",
+        "maturity": "15/12/2048"
+      },
+      {
+        "name": "Tesouro IPCA+ 2045Juros\n                                                                            Semestrais",
+        "rate": "IPCA + 7,30%",
+        "minInvest": "R$ 41,41",
+        "price": "R$ 4.141,03",
+        "maturity": "15/05/2045"
+      },
+      {
+        "name": "Tesouro IPCA+ 2060Juros\n                                                                            Semestrais",
+        "rate": "IPCA + 7,19%",
+        "minInvest": "R$ 39,91",
+        "price": "R$ 3.991,33",
+        "maturity": "15/08/2060"
+      },
+      {
+        "name": "Tesouro IPCA+ 2037Juros\n                                                                            Semestrais",
+        "rate": "IPCA + 7,60%",
+        "minInvest": "R$ 42,02",
+        "price": "R$ 4.202,91",
+        "maturity": "15/05/2037"
+      }
+    ],
+    "private": [
+      {
+        "name": "CDB 100% CDI",
+        "rate": "14.90%",
+        "type": "Pós-fixado"
+      },
+      {
+        "name": "LCI/LCA 90% CDI",
+        "rate": "13.41%",
+        "type": "Isento IR"
+      },
+      {
+        "name": "Poupança (Est.)",
+        "rate": "6.17% + TR",
+        "type": "Isento IR"
+      },
+      {
+        "name": "CDB Pré-fixado (Est.)",
+        "rate": "16.50%",
+        "type": "Prefixado"
+      }
+    ]
+  }
+}

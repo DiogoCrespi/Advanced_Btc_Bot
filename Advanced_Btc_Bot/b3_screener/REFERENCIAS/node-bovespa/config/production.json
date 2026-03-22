@@ -1,0 +1,10 @@
+{
+  "SHEET_URL": "",
+  "db": {
+    "database": "bovespa",
+    "user": "root",
+    "password": "thisisaveryhardtobreakpasswordmahman123",
+    "host": "postgres",
+    "dialect": "postgresql"
+  }
+}

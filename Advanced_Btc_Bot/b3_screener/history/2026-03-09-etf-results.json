@@ -1,0 +1,411 @@
+{
+  "date": "2026-03-09T13:04:29.712Z",
+  "count": 40,
+  "economy": {
+    "dollar": 5.27338,
+    "selic": 15
+  },
+  "type": "etf",
+  "items": [
+    {
+      "ticker": "BOVA11",
+      "price": 175.9,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 188.96,
+      "low_52w": 0
+    },
+    {
+      "ticker": "IVVB11",
+      "price": 399.45,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 433.61,
+      "low_52w": 319.86
+    },
+    {
+      "ticker": "SMAL11",
+      "price": 117.25,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 130.44,
+      "low_52w": 88.26
+    },
+    {
+      "ticker": "HASH11",
+      "price": 47.19,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 94.9,
+      "low_52w": 0
+    },
+    {
+      "ticker": "GOLD11",
+      "price": 28.11,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 30.14,
+      "low_52w": 0
+    },
+    {
+      "ticker": "XINA11",
+      "price": 7.65,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 9.26,
+      "low_52w": 0
+    },
+    {
+      "ticker": "NASD11",
+      "price": 17.99,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 19.96,
+      "low_52w": 13.6
+    },
+    {
+      "ticker": "BBOV11",
+      "price": 93.9,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 100.92,
+      "low_52w": 0
+    },
+    {
+      "ticker": "SPYI11",
+      "price": 106.47,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 118.37,
+      "low_52w": 0
+    },
+    {
+      "ticker": "WRLD11",
+      "price": 133.96,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 148.49,
+      "low_52w": 0
+    },
+    {
+      "ticker": "DIVO11",
+      "price": 129.08,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 137.62,
+      "low_52w": 0
+    },
+    {
+      "ticker": "NDIV11",
+      "price": 126.56,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 137.1,
+      "low_52w": 100.37
+    },
+    {
+      "ticker": "QQQI11",
+      "price": 93.18,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 105.89,
+      "low_52w": 84.8
+    },
+    {
+      "ticker": "COIN11",
+      "price": 45.8,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 97.67,
+      "low_52w": 0
+    },
+    {
+      "ticker": "QBTC11",
+      "price": 21.69,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 40.48,
+      "low_52w": 19.83
+    },
+    {
+      "ticker": "SPXB11",
+      "price": 15.53,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 17.1,
+      "low_52w": 0
+    },
+    {
+      "ticker": "DIVD11",
+      "price": 64.25,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 68.89,
+      "low_52w": 0
+    },
+    {
+      "ticker": "LFTB11",
+      "price": 118.38,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 118.37,
+      "low_52w": 100.02
+    },
+    {
+      "ticker": "B5P211",
+      "price": 104.17,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 104.54,
+      "low_52w": 0
+    },
+    {
+      "ticker": "TECK11",
+      "price": 101.5,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 120.48,
+      "low_52w": 0
+    },
+    {
+      "ticker": "SPXI11",
+      "price": 48.61,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 52.959,
+      "low_52w": 0
+    },
+    {
+      "ticker": "BITH11",
+      "price": 80.99,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 152.45,
+      "low_52w": 0
+    },
+    {
+      "ticker": "XFIX11",
+      "price": 13.73,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 14.1,
+      "low_52w": 0
+    },
+    {
+      "ticker": "AUVP11",
+      "price": 125.1,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 139.99,
+      "low_52w": 0
+    },
+    {
+      "ticker": "BBSD11",
+      "price": 142.46,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 153.09,
+      "low_52w": 0
+    },
+    {
+      "ticker": "GPUS11",
+      "price": 107.74,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 117.45,
+      "low_52w": 0
+    },
+    {
+      "ticker": "LFTS11",
+      "price": 149.03,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 149.15,
+      "low_52w": 130.23
+    },
+    {
+      "ticker": "IMAB11",
+      "price": 110.4,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 113,
+      "low_52w": 0
+    },
+    {
+      "ticker": "ETHE11",
+      "price": 30.1,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 76.4,
+      "low_52w": 0
+    },
+    {
+      "ticker": "NSDV11",
+      "price": 154.18,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 168.1,
+      "low_52w": 112.93
+    },
+    {
+      "ticker": "ESGB11",
+      "price": 126.12,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 136.63,
+      "low_52w": 0
+    },
+    {
+      "ticker": "BOVB11",
+      "price": 183.46,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 196.92,
+      "low_52w": 0
+    },
+    {
+      "ticker": "CRPT11",
+      "price": 12.69,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 25.4,
+      "low_52w": 0
+    },
+    {
+      "ticker": "BOVV11",
+      "price": 184.54,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 198.3,
+      "low_52w": 0
+    },
+    {
+      "ticker": "AREA11",
+      "price": 104.48,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 106.5,
+      "low_52w": 0
+    },
+    {
+      "ticker": "ALUG11",
+      "price": 42.11,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 44.81,
+      "low_52w": 0
+    },
+    {
+      "ticker": "XBOV11",
+      "price": 174.88,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 187.8,
+      "low_52w": 0
+    },
+    {
+      "ticker": "IWMI11",
+      "price": 78.38,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 87.71,
+      "low_52w": 71.5
+    },
+    {
+      "ticker": "BEST11",
+      "price": 121.43,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 130.76,
+      "low_52w": 0
+    },
+    {
+      "ticker": "QETH11",
+      "price": 7.36,
+      "dy": 0,
+      "market_cap": 0,
+      "variation_12m": 0,
+      "liquidity": 0,
+      "high_52w": 18.56,
+      "low_52w": 6.21
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+﻿
+[14:54:35] INICIANDO COMPARACAO DE YIELD (USD vs BRL)
+============================================================
+Fetching Delivery contracts for BTC...
+Contrato Analisado: BTCUSD_260327
+Data Vencimento: 2026-03-27 08:00:00
+------------------------------------------------------------
+    Mercado   Preco Spot Yield Anualizado
+ USD (USDT) US$ 73921.56            3.69%
+BRL (Reais) R$ 388897.00            4.76%
+------------------------------------------------------------
+VENCEDOR: MERCADO BRL (Reais) esta pagando 1.07% a mais!
+
+Nota: Taxa de conversao USDT/BRL usada: 5.2628
+============================================================
+
