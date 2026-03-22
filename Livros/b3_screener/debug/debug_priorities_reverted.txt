@@ -1,0 +1,30 @@
+
+Testing Classification for MXRF11...
+[Inv10 Data] Type: "Fundo de Papel", Segment: "Híbrido"
+[Result] Classified Type: MULTI
+[Result] Strategies: 
+
+Testing Classification for HGLG11...
+[Inv10 Data] Type: "Fundo de Tijolo", Segment: "Logístico / Indústria / Galpões"
+[Result] Classified Type: TIJOLO
+[Result] Strategies: 
+
+Testing Classification for SNAG11...
+[Inv10 Data] Type: "Outro", Segment: "Fiagros"
+[Result] Classified Type: AGRO
+[Result] Strategies: 
+
+Testing Classification for JURO11...
+[Inv10 Data] Type: "Outro", Segment: "Fundo de Infraestrutura (FI-Infra)"
+[Result] Classified Type: INFRA
+[Result] Strategies: 
+
+Testing Classification for KNRI11...
+[Inv10 Data] Type: "Fundo de Tijolo", Segment: "Híbrido"
+[Result] Classified Type: MULTI
+[Result] Strategies: 
+
+Testing Classification for VISC11...
+[Inv10 Data] Type: "Fundo de Tijolo", Segment: "Shoppings / Varejo"
+[Result] Classified Type: TIJOLO
+[Result] Strategies: 

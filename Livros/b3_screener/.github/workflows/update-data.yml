@@ -1,0 +1,81 @@
+name: Update Market Data
+
+on:
+  schedule:
+    # Runs every day at 9 AM BrasÃ­lia (12 PM UTC) - 1 hour before B3 opens at 10 AM
+    - cron: '0 12 * * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Configure DNS to Google (8.8.8.8)
+        run: |
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
+          cat /etc/resolv.conf
+          
+      - name: Debug Network (Fundamentus)
+        run: |
+           sudo apt-get install -y dnsutils
+           echo "--- NSLOOKUP ---"
+           nslookup fundamentus.com.br
+           echo "--- DIG ---"
+           dig fundamentus.com.br +short
+           echo "--- CURL HEADERS ---"
+           curl -I https://www.fundamentus.com.br/detalhes.php || echo "Curl failed"
+
+      - name: Install and Configure Cloudflare WARP
+        run: |
+          # 1. Install WARP
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update
+          sudo apt-get install -y cloudflare-warp
+
+          # 2. Register and Connect (Free Account)
+          echo "Registering WARP..."
+          sudo warp-cli --accept-tos registration new
+          
+          echo "Connecting WARP..."
+          sudo warp-cli --accept-tos mode warp
+          sudo warp-cli --accept-tos connect
+          
+          # 3. Wait and Verify
+          echo "Waiting for connection..."
+          sleep 5
+          
+          echo "Checking status..."
+          sudo warp-cli --accept-tos status
+          
+          echo "Verifying Public IP (via Cloudflare Trace)..."
+          curl https://www.cloudflare.com/cdn-cgi/trace
+          
+      - name: Install dependencies
+        run: npm install
+
+
+        
+      - name: Generate data
+        env:
+          MARKET_DATA_TOKEN: ${{ secrets.MARKET_DATA_TOKEN }}
+        run: node export_data.js
+        
+      - name: Commit and push if changed
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+          git add data.js history/*.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update market data and history [skip ci]" && git push)

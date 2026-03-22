@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Generated data - REMOVED: data.js is now tracked for GitHub Actions
+*.html.backup
+
+# Debug scripts
+debug_*.js
+test_*.js
+fetch_investidor10.js
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

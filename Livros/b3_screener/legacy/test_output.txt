@@ -1,0 +1,29 @@
+--- TESTING NEW SCREENER CLASS ---
+
+--> TEST 1: Stocks with strict criteria
+
+🚀 Starting Screener for [STOCK]...
+📊 Attempting to fetch from Fundamentus...
+✅ Successfully fetched 997 stocks from Fundamentus
+📥 Initial fetch: 141 items.
+✅ Filtered down to: 34 items.
+
+Top 5 Stocks found:
+LPSB3 | DY: 12.28% | P/VP: 1.01 | Score: 10
+DEXP3 | DY: 10.95% | P/VP: 0.9 | Score: 10
+AZZA3 | DY: 9.58% | P/VP: 0.64 | Score: 10
+ISAE4 | DY: 9.33% | P/VP: 0.93 | Score: 10
+BAZA3 | DY: 9.28% | P/VP: 0.66 | Score: 10
+
+--> TEST 2: FIIs (Paper) with discount
+
+🚀 Starting Screener for [FII]...
+📥 Initial fetch: 152 items.
+✅ Filtered down to: 72 items.
+
+Top 5 FIIs found:
+LASC11 | DY: 16.2% | P/VP: 0.85 | Type: TIJOLO | Score: 10
+CVBI11 | DY: 14.35% | P/VP: 0.89 | Type: OUTROS | Score: 10
+VCJR11 | DY: 13.89% | P/VP: 0.88 | Type: OUTROS | Score: 10
+VGIP11 | DY: 13.87% | P/VP: 0.9 | Type: MULTI | Score: 10
+PCIP11 | DY: 13.85% | P/VP: 0.9 | Type: OUTROS | Score: 10
