@@ -1,21 +1,38 @@
 version: '3.8'
 
+networks:
+  quant_net:
+    driver: bridge
+
 services:
-  basis-arb-bot:
-    build: .
-    container_name: cofre_quantitativo_bot
+  # 1. MiroFish Sentiment Engine (Backend)
+  mirofish-backend:
+    build: ./MiroFish
+    container_name: mirofish_app
     restart: unless-stopped
     ports:
       - "8000:8000"
     env_file: .env
+    networks:
+      - quant_net
+
+  # 2. Advanced Multicore BTC Bot
+  btc-master-bot:
+    build: .
+    container_name: btc_master_bot
+    restart: unless-stopped
+    depends_on:
+      - mirofish-backend
+    environment:
+      # Use internal Docker DNS for service communication
+      - MIROFISH_API_URL=http://mirofish-backend:8000/api
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
+    command: [ "python", "-u", "multicore_master_bot.py" ]
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
     networks:
-      - trading_net
-
-networks:
-  trading_net:
-    driver: bridge
+      - quant_net
