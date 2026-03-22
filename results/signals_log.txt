@@ -1,6 +1,0 @@
-[13:12:38] BTCBRL: VENDA  (57%) (Tendência Baixa)
-[13:12:38] ETHBRL: COMPRA (59%) (Divergência CVD)
-[13:12:38] SOLBRL: VENDA  (56%) (Tendência Baixa)
-[18:33:15] BTCBRL: VENDA  (62%) (Tendência Baixa)
-[18:33:15] ETHBRL: ABERTO (+0.00%) (Confluência)
-[18:33:15] SOLBRL: ABERTO (-0.00%) (Tendência Baixa)
