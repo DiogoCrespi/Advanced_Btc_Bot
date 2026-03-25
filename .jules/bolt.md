@@ -1,0 +1,3 @@
+## 2026-03-25 - [Pandas Iteration Bottleneck]
+**Learning:** The `logic/order_flow_logic.py` file contained multiple methods (`detect_liquidity_sweep` and `detect_cvd_divergence`) using `for` loops with `iloc` to calculate window-based indicators. This causes an O(N) performance bottleneck with high Pandas index overhead, which scales terribly with high-frequency time-series data.
+**Action:** Always refactor iterative Pandas logic with vectorized operations (`rolling()`, `shift()`, `diff()`, and `np.where`/`np.select`). This results in virtually O(1) time execution relative to Python iteration limits and avoids unnecessary looping overhead.
