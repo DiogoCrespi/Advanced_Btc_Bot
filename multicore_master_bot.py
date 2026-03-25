@@ -45,23 +45,24 @@ class MulticoreMasterBot:
         self.stop_loss = 0.015  # 1.5%
         self.take_profit = 0.03 # 3.0%
         
-        # Paper Trading
-        self.balance_file = "results/balance_state.txt"
-        self.balance = self.load_balance()
-        self.positions = self.load_state() # Load saved positions
-        self.paper_log = "results/paper_trades_log.txt"
+        # Paper Trading Basics
         self.fee_rate = 0.001 
         self.trade_threshold = 0.65 
         self.min_binance_amount = 10.0 # Minimo Binance (R$)
         self.trade_amount = 100.0     # Valor fixado por trade (R$)
-        self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
-        
+        self.balance_file = "results/balance_state.txt"
+        self.paper_log = "results/paper_trades_log.txt"
+
         # MiroFish Settings
+        self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
         self.mf_client = MiroFishClient()
         self.mf_project_id = "trading_sentiment_auto"
         self.mf_simulation_id = None # To be updated dynamically
         
-        self.load_state() # Load state after initializing MiroFish client to potentially load mf_simulation_id
+        # Load Existing State
+        self.balance = self.load_balance()
+        self.positions = self.load_state() # This will populate self.mf_simulation_id if it exists
+        
         # Modules
         self.engine = DataEngine()
         self.basis_logic = BasisLogic()
@@ -131,18 +132,29 @@ class MulticoreMasterBot:
         try:
             # Look for existing simulation report first
             if not self.mf_simulation_id:
-                # In a real scenario, we'd find the latest sim_id for the project
-                # For sekarang, we assume we might have one or need to create it
-                pass 
+                print(f"[MIROFISH] Iniciando nova simulacao de sentimento...")
+                create_res = self.mf_client.create_simulation(self.mf_project_id)
+                if create_res.get("success"):
+                    self.mf_simulation_id = create_res.get("data", {}).get("simulation_id")
+                    print(f"[MIROFISH] Simulacao criada: {self.mf_simulation_id}")
+                    # Prepare and start
+                    self.mf_client.prepare_simulation(self.mf_simulation_id)
+                    self.mf_client.start_simulation(self.mf_simulation_id)
+                    print(f"[MIROFISH] Analise iniciada. Aguardando relatorio...")
+                else:
+                    print(f"[MIROFISH] Falha ao criar simulacao: {create_res.get('error')}")
             
             if self.mf_simulation_id:
                 res = self.mf_client.get_sentiment_summary(self.mf_simulation_id)
+                # If report not ready yet, trigger generation just in case
+                if res.get("sentiment") == "Neutral" and res.get("confidence") == 0:
+                     self.mf_client.generate_report(self.mf_simulation_id)
+                
                 self.last_sentiment = {
                     "sentiment": res.get("sentiment", "Neutral"),
                     "confidence": res.get("confidence", 0.5),
                     "updated": datetime.now().strftime('%H:%M:%S')
                 }
-                # logger.info(f"MiroFish Sentiment Updated: {self.last_sentiment['sentiment']} ({self.last_sentiment['confidence']:.2f})")
                 print(f"MiroFish Sentiment Updated: {self.last_sentiment['sentiment']} ({self.last_sentiment['confidence']:.2f})")
         except Exception as e:
             # logger.error(f"Error updating MiroFish sentiment: {e}")
