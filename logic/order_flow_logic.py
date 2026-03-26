@@ -75,26 +75,26 @@ class OrderFlowLogic:
         Price breaks the high/low of the last X candles but closes back inside.
         """
         df = df.copy()
-        df['sweep_high'] = 0
-        df['sweep_low'] = 0
         
-        for i in range(lookback, len(df)):
-            # Previous High/Low
-            prev_high = df['high'].iloc[i-lookback:i].max()
-            prev_low = df['low'].iloc[i-lookback:i].min()
-            
-            curr_high = df['high'].iloc[i]
-            curr_low = df['low'].iloc[i]
-            curr_close = df['close'].iloc[i]
-            curr_open = df['open'].iloc[i]
-            
-            # Sweep High: price went above prev_high but closed below it
-            if curr_high > prev_high and curr_close < prev_high:
-                df.iloc[i, df.columns.get_loc('sweep_high')] = 1
-                
-            # Sweep Low: price went below prev_low but closed above it
-            if curr_low < prev_low and curr_close > prev_low:
-                df.iloc[i, df.columns.get_loc('sweep_low')] = 1
+        # Calculate rolling min/max for the lookback window, shifted by 1 so it doesn't include the current row
+        prev_high = df['high'].rolling(window=lookback).max().shift(1)
+        prev_low = df['low'].rolling(window=lookback).min().shift(1)
+
+        curr_high = df['high']
+        curr_low = df['low']
+        curr_close = df['close']
+
+        # Sweep High: price went above prev_high but closed below it
+        sweep_high_cond = (curr_high > prev_high) & (curr_close < prev_high)
+        df['sweep_high'] = np.where(sweep_high_cond, 1, 0)
+
+        # Sweep Low: price went below prev_low but closed above it
+        sweep_low_cond = (curr_low < prev_low) & (curr_close > prev_low)
+        df['sweep_low'] = np.where(sweep_low_cond, 1, 0)
+
+        # Set first 'lookback' rows to 0 to match original logic
+        df.loc[df.index[:lookback], 'sweep_high'] = 0
+        df.loc[df.index[:lookback], 'sweep_low'] = 0
                 
         return df
 
@@ -105,21 +105,20 @@ class OrderFlowLogic:
         Price makes a lower low, but CVD makes a higher low (Bullish).
         """
         df = df.copy()
-        df['cvd_div'] = 0 # 1 for bullish, -1 for bearish
         
-        for i in range(lookback, len(df)):
-            # Price Trend
-            price_change = df['close'].iloc[i] - df['close'].iloc[i-lookback]
-            # CVD Trend
-            cvd_change = df['CVD'].iloc[i] - df['CVD'].iloc[i-lookback]
-            
-            # Bearish Divergence: Price up, CVD down (Absorption by sellers)
-            if price_change > 0 and cvd_change < 0:
-                df.iloc[i, df.columns.get_loc('cvd_div')] = -1
-            
-            # Bullish Divergence: Price down, CVD up (Absorption by buyers)
-            elif price_change < 0 and cvd_change > 0:
-                df.iloc[i, df.columns.get_loc('cvd_div')] = 1
+        price_change = df['close'] - df['close'].shift(lookback)
+        cvd_change = df['CVD'] - df['CVD'].shift(lookback)
+
+        # Bearish Divergence: Price up, CVD down (Absorption by sellers)
+        bearish_cond = (price_change > 0) & (cvd_change < 0)
+
+        # Bullish Divergence: Price down, CVD up (Absorption by buyers)
+        bullish_cond = (price_change < 0) & (cvd_change > 0)
+
+        df['cvd_div'] = np.where(bullish_cond, 1, np.where(bearish_cond, -1, 0))
+
+        # Set first 'lookback' rows to 0 to match original logic
+        df.loc[df.index[:lookback], 'cvd_div'] = 0
                 
         return df
 
