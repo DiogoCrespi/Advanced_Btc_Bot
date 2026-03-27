@@ -1,14 +1,15 @@
-
 import time
 import os
 import sys
 import json
 import requests
+import queue
+import threading
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
+from threading import Lock, Thread
 
 # Import custom modules
 from data.data_engine import DataEngine
@@ -72,13 +73,21 @@ class MulticoreMasterBot:
         self.brains = {asset: MLBrain() for asset in assets}
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
         
+        # Async I/O Logging Queue
+        self.log_queue = queue.Queue()
+        self.log_thread = Thread(target=self._log_worker, daemon=True)
+        self.log_thread.start()
+        
+        # Lock for thread-safe position updates
+        self.pos_lock = Lock()
+        
         print(f"[INIT] Inicializando Motores e Treinando Cerebro...")
         for asset in assets:
             limit = 1500
             df = self.engine.fetch_binance_klines(asset, limit=limit)
             if not df.empty:
                 df = self.engine.apply_indicators(df)
-                self.brains[asset].train(df, train_full=True)
+                self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
                 self.stats[asset]["history_days"] = len(df) / 24
                 self.stats[asset]["samples"] = len(df)
                 self.stats[asset]["oos_score"] = 0.6 + (np.random.rand() * 0.1)
@@ -93,9 +102,34 @@ class MulticoreMasterBot:
             except: pass
         return 1000.0
 
+    def _log_worker(self):
+        """ Daemon thread for Async I/O operations """
+        while True:
+            task = self.log_queue.get()
+            if task is None: break
+            action, data = task
+            try:
+                if action == "append":
+                    filepath, content = data
+                    with open(filepath, "a", encoding="utf-8") as f:
+                        f.write(content + "\n")
+                elif action == "write":
+                    filepath, content = data
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                elif action == "save_state":
+                    filepath, state_data = data
+                    with open(filepath, "w") as f:
+                        json.dump(state_data, f, cls=NumpyEncoder, indent=4)
+            except Exception as e:
+                print(f"[IO ERROR] {e}")
+            self.log_queue.task_done()
+
+    def async_log(self, filepath, content):
+        self.log_queue.put(("append", (filepath, content)))
+
     def save_balance(self):
-        with open(self.balance_file, "w") as f:
-            f.write(f"{self.balance:.2f}")
+        self.log_queue.put(("write", (self.balance_file, f"{self.balance:.2f}")))
 
     def load_state(self):
         if os.path.exists(self.status_file):
@@ -120,12 +154,11 @@ class MulticoreMasterBot:
                 "trade_amount": self.trade_amount,
                 "sentiment": self.last_sentiment,
                 "mf_simulation_id": self.mf_simulation_id,
-                "positions": self.positions
+                "positions": self.positions.copy()
             }
-            with open(self.status_file, "w") as f:
-                json.dump(state, f, indent=4, cls=NumpyEncoder)
+            self.log_queue.put(("save_state", (self.status_file, state)))
         except Exception as e:
-            print(f"Erro ao salvar estado: {e}")
+            print(f"Erro ao enfileirar estado: {e}")
 
     def update_mirofish_sentiment(self):
         """Periodically update sentiment from MiroFish."""
@@ -217,94 +250,100 @@ class MulticoreMasterBot:
                 # TIER 2: ALPHA
                 print(f"| [ALPHA ML ] Sinais em tempo real (BRL) baseados em Order Flow:       |")
                 
-                for asset in self.assets:
-                    df_ml = self.engine.fetch_binance_klines(asset, limit=100)
-                    df_ml = self.engine.apply_indicators(df_ml)
-                    processed_ml = self.brains[asset].prepare_features(df_ml)
-                    feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
-                    last_features = processed_ml[feature_cols].iloc[-1].values
-                    signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
-                    
-                    current_price = df_ml['close'].iloc[-1]
-                    
-                    # 1. Check Positions
-                    if asset in self.positions:
-                        self.positions[asset]['current_price'] = current_price # Update live price
-                        pos = self.positions[asset]
-                        price_ret = (current_price / pos['entry']) - 1
-                        trade_pnl = price_ret * pos['signal']
+                def process_asset(asset):
+                    try:
+                        df_ml = self.engine.fetch_binance_klines(asset, limit=100)
+                        if df_ml.empty: return
+                        df_ml = self.engine.apply_indicators(df_ml)
+                        processed_ml = self.brains[asset].prepare_features(df_ml)
+                        feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
+                        last_features = processed_ml[feature_cols].iloc[-1].values
+                        signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
                         
-                        exit_reason = None
-                        if trade_pnl >= self.take_profit: exit_reason = "TAKE PROFIT"
-                        elif trade_pnl <= -self.stop_loss: exit_reason = "STOP LOSS"
+                        current_price = df_ml['close'].iloc[-1]
                         
-                        if exit_reason:
-                            total_trade_fee = self.fee_rate * 2
-                            net_pnl_pct = trade_pnl - total_trade_fee
-                            profit_brl = self.trade_amount * net_pnl_pct
-                            self.balance += (self.trade_amount + profit_brl) # Retorna capital + lucro
-                            self.save_balance()
-                            log_exit = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL Liquid: {net_pnl_pct:+.2%} | Saldo: R$ {self.balance:.2f}"
-                            self.history_log.insert(0, log_exit)
-                            with open(self.paper_log, "a", encoding="utf-8") as f: f.write(log_exit + "\n")
-                            with open(self.log_file, "a", encoding="utf-8") as f: f.write(log_exit + "\n")
-                            del self.positions[asset]
-                            self.save_state() # Update state immediately after exit
-                    
-                    # 2. Open Positions
-                    elif signal != 0 and prob >= self.trade_threshold:
-                        # Apply Sentiment Bias
-                        bias = 0.0
-                        if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
-                            bias = 0.05
-                        elif self.last_sentiment["sentiment"] == "Bearish" and signal == -1:
-                            bias = 0.05
-                        
-                        effective_prob = prob + bias
-                        
-                        if effective_prob >= self.trade_threshold:
-                            if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
-                                qty = self.trade_amount / current_price
-                                side = "COMPRA" if signal == 1 else "VENDA"
-                                self.positions[asset] = {
-                                    "entry": current_price,
-                                    "signal": signal,
-                                    "qty": qty,
-                                    "prob": prob,
-                                    "effective_prob": effective_prob,
-                                    "time": datetime.now().strftime('%H:%M:%S'),
-                                    "current_price": current_price
-                                }
-                                self.balance -= self.trade_amount # Deduct trade amount for paper trading
-                                log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {current_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
-                                self.history_log.insert(0, log_entry)
-                                with open(self.paper_log, "a", encoding="utf-8") as f: f.write(log_entry + "\n")
-                                with open(self.log_file, "a", encoding="utf-8") as f: f.write(log_entry + "\n")
-                                self.save_balance()
-                                self.save_state() # Update state immediately after entry
+                        with self.pos_lock:
+                            # 1. Check Positions
+                            if asset in self.positions:
+                                self.positions[asset]['current_price'] = current_price # Update live price
+                                pos = self.positions[asset]
+                                price_ret = (current_price / pos['entry']) - 1
+                                trade_pnl = price_ret * pos['signal']
+                                
+                                exit_reason = None
+                                if trade_pnl >= self.take_profit: exit_reason = "TAKE PROFIT"
+                                elif trade_pnl <= -self.stop_loss: exit_reason = "STOP LOSS"
+                                
+                                if exit_reason:
+                                    total_trade_fee = self.fee_rate * 2
+                                    net_pnl_pct = trade_pnl - total_trade_fee
+                                    profit_brl = self.trade_amount * net_pnl_pct
+                                    self.balance += (self.trade_amount + profit_brl) # Retorna capital + lucro
+                                    self.save_balance()
+                                    log_exit = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL Liquid: {net_pnl_pct:+.2%} | Saldo: R$ {self.balance:.2f}"
+                                    self.history_log.insert(0, log_exit)
+                                    self.async_log(self.paper_log, log_exit)
+                                    self.async_log(self.log_file, log_exit)
+                                    del self.positions[asset]
+                                    self.save_state() # Update state immediately after exit
+                            
+                            # 2. Open Positions
+                            elif signal != 0 and prob >= self.trade_threshold:
+                                # Apply Sentiment Bias
+                                bias = 0.0
+                                if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
+                                    bias = 0.05
+                                elif self.last_sentiment["sentiment"] == "Bearish" and signal == -1:
+                                    bias = 0.05
+                                
+                                effective_prob = prob + bias
+                                
+                                if effective_prob >= self.trade_threshold:
+                                    if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
+                                        qty = self.trade_amount / current_price
+                                        side = "COMPRA" if signal == 1 else "VENDA"
+                                        self.positions[asset] = {
+                                            "entry": current_price,
+                                            "signal": signal,
+                                            "qty": qty,
+                                            "prob": prob,
+                                            "effective_prob": effective_prob,
+                                            "time": datetime.now().strftime('%H:%M:%S'),
+                                            "current_price": current_price
+                                        }
+                                        self.balance -= self.trade_amount # Deduct trade amount for paper trading
+                                        log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {current_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
+                                        self.history_log.insert(0, log_entry)
+                                        self.async_log(self.paper_log, log_entry)
+                                        self.async_log(self.log_file, log_entry)
+                                        self.save_balance()
+                                        self.save_state() # Update state immediately after entry
 
-                    # Status Row
-                    sig_text = "NADA"
-                    sig_icon = " "
-                    if asset in self.positions:
-                        pos = self.positions[asset]
-                        pnl_pct = ((current_price / pos['entry']) - 1) * pos['signal']
-                        # PnL em reais aproximado para o monitor
-                        asset_pnl_brl = pnl_pct * self.trade_amount
-                        sig_text = f"ABERTO ({pnl_pct:+.2%})"
-                        sig_icon = "B" if pos['signal'] == 1 else "S"
-                    elif signal == 1: sig_text = f"COMPRA ({prob:.0%})"; sig_icon = "+"
-                    elif signal == -1: sig_text = f"VENDA  ({prob:.0%})"; sig_icon = "-"
-                    else: sig_text = f"NEUTRO ({prob:.0%})"; sig_icon = "."
-                    
-                    oos_acc = self.stats[asset]["oos_score"]
-                    print(f"|    {sig_icon} {asset:9}: {sig_text:18} - {reason:18} |")
-                    print(f"|      (Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%)                   |")
-                    
-                    log_ml = f"[{timestamp}] {asset:9}: {sig_text:18} - {reason:18} | Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%"
-                    with open(self.log_file, "a", encoding="utf-8") as f:
-                        f.write(log_ml + "\n")
-                        f.flush()
+                            # Status Row
+                            sig_text = "NADA"
+                            sig_icon = " "
+                            if asset in self.positions:
+                                pos = self.positions[asset]
+                                pnl_pct = ((current_price / pos['entry']) - 1) * pos['signal']
+                                sig_text = f"ABERTO ({pnl_pct:+.2%})"
+                                sig_icon = "B" if pos['signal'] == 1 else "S"
+                            elif signal == 1: sig_text = f"COMPRA ({prob:.0%})"; sig_icon = "+"
+                            elif signal == -1: sig_text = f"VENDA  ({prob:.0%})"; sig_icon = "-"
+                            else: sig_text = f"NEUTRO ({prob:.0%})"; sig_icon = "."
+                            
+                            oos_acc = self.stats[asset]["oos_score"]
+                            print(f"|    {sig_icon} {asset:9}: {sig_text:18} - {reason:18} |")
+                            print(f"|      (Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%)                   |")
+                            
+                            log_ml = f"[{timestamp}] {asset:9}: {sig_text:18} - {reason:18} | Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%"
+                            self.async_log(self.log_file, log_ml)
+
+                    except Exception as e:
+                        print(f"Erro processando {asset}: {e}")
+
+                # Execute asset processing concurrently
+                with ThreadPoolExecutor(max_workers=len(self.assets)) as executor:
+                    executor.map(process_asset, self.assets)
                 
                 self.history_log = self.history_log[:5]
                 print(f"+{'-'*72}+")

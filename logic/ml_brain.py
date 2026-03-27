@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from logic.order_flow_logic import OrderFlowLogic
 from datetime import timedelta
 
@@ -15,7 +14,6 @@ class MLBrain:
             random_state=42, 
             class_weight='balanced'
         )
-        self.scaler = StandardScaler()
         self.logic = OrderFlowLogic()
         self.is_trained = False
 
@@ -26,10 +24,15 @@ class MLBrain:
         df = df.copy()
         
         # 1. Order Flow Signals (Logic)
-        # For ML Training, we use a rolling anchor that covers the whole history
-        # instead of a fixed 7-day anchor.
-        anchor_all = df.index[0]
-        df['AVWAP'] = self.logic.calculate_avwap(df, anchor_all)
+        # For ML Training, use a Weekly anchored VWAP to align with recent institutional momentum
+        df['tp_temp'] = (df['high'] + df['low'] + df['close']) / 3
+        df['pv_temp'] = df['tp_temp'] * df['volume']
+        weekly_groups = df.groupby(pd.Grouper(freq='1W'))
+        df['cum_pv'] = weekly_groups['pv_temp'].cumsum()
+        df['cum_vol'] = weekly_groups['volume'].cumsum()
+        df['AVWAP'] = df['cum_pv'] / df['cum_vol']
+        df.drop(columns=['tp_temp', 'pv_temp', 'cum_pv', 'cum_vol'], inplace=True)
+        
         df = self.logic.detect_liquidity_sweep(df)
         df = self.logic.detect_cvd_divergence(df)
         
@@ -80,15 +83,16 @@ class MLBrain:
         labels.extend([0] * horizon)
         return np.array(labels)
 
-    def train(self, df, train_full=False):
+    def train(self, df, train_full=False, tp=0.015, sl=0.008):
         """
         Trains the Random Forest model on historical data.
         If train_full is True, it uses 100% of data for training (no test split).
+        Receives tp and sl dynamically to synchronize ML expectations with bot parameters.
         """
         data = self.prepare_features(df)
         feature_cols = [c for c in data.columns if c.startswith('feat_')]
         X = data[feature_cols].values
-        y = self.create_labels(data)
+        y = self.create_labels(data, tp=tp, sl=sl)
         
         # Log label distribution to detect bias
         unique, counts = np.unique(y, return_counts=True)
@@ -101,15 +105,13 @@ class MLBrain:
 
         if train_full:
             # Train on EVERYTHING (for Live Bot)
-            self.scaler.fit(X)
-            self.model.fit(self.scaler.transform(X), y)
+            self.model.fit(X, y) # Vectorized, scale-invariant fit
             print(f"🧠 ML Brain Trained! (Full History Mode: {len(X)} samples)")
         else:
             # Split and Train (for Backtest/OOS Validation)
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-            self.scaler.fit(X_train)
-            self.model.fit(self.scaler.transform(X_train), y_train)
-            score = self.model.score(self.scaler.transform(X_test), y_test)
+            self.model.fit(X_train, y_train)
+            score = self.model.score(X_test, y_test)
             print(f"🧠 ML Brain Trained! Accuracy (OOS): {score:.2%}")
             
         self.is_trained = True
@@ -123,10 +125,9 @@ class MLBrain:
             return 0, 0.0, "Brain not trained"
         
         feat_vec = current_features_row.reshape(1, -1)
-        feat_scaled = self.scaler.transform(feat_vec)
         
-        pred_class = self.model.predict(feat_scaled)[0]
-        probs = self.model.predict_proba(feat_scaled)[0]
+        pred_class = self.model.predict(feat_vec)[0]
+        probs = self.model.predict_proba(feat_vec)[0]
         max_prob = max(probs)
         
         # Heurística para explicar o motivo
