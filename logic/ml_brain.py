@@ -1,18 +1,20 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from logic.order_flow_logic import OrderFlowLogic
 from datetime import timedelta
 
 class MLBrain:
     def __init__(self):
         # class_weight='balanced' removes the bias towards the most frequent class (usually Neutral or Long)
+        # max_samples=0.5 mitiga o overfitting de 'Label Concurrency' causado pelo Triple Barrier Method
         self.model = RandomForestClassifier(
             n_estimators=150, 
             max_depth=12, 
+            min_samples_leaf=15, # Previne overfitting de terminal nodes isolados (ruído em forward-testing)
             random_state=42, 
-            class_weight='balanced'
+            class_weight='balanced_subsample',
+            max_samples=0.5
         )
         self.logic = OrderFlowLogic()
         self.is_trained = False
@@ -24,14 +26,17 @@ class MLBrain:
         df = df.copy()
         
         # 1. Order Flow Signals (Logic)
-        # For ML Training, use a Weekly anchored VWAP to align with recent institutional momentum
+        # Fix: Using a Rolling 7-day VWAP instead of Calendar Anchored to avoid artificial discontinuities every Monday
         df['tp_temp'] = (df['high'] + df['low'] + df['close']) / 3
         df['pv_temp'] = df['tp_temp'] * df['volume']
-        weekly_groups = df.groupby(pd.Grouper(freq='1W'))
-        df['cum_pv'] = weekly_groups['pv_temp'].cumsum()
-        df['cum_vol'] = weekly_groups['volume'].cumsum()
-        df['AVWAP'] = df['cum_pv'] / df['cum_vol']
-        df.drop(columns=['tp_temp', 'pv_temp', 'cum_pv', 'cum_vol'], inplace=True)
+        
+        # '7D' string relies on DatetimeIndex. Se falhar, fallback para 168 (assumindo 1h). Min periods assegura validade no inicio.
+        try:
+            df['AVWAP'] = df['pv_temp'].rolling('7D', min_periods=1).sum() / df['volume'].rolling('7D', min_periods=1).sum()
+        except ValueError:
+            df['AVWAP'] = df['pv_temp'].rolling(168, min_periods=1).sum() / df['volume'].rolling(168, min_periods=1).sum()
+            
+        df.drop(columns=['tp_temp', 'pv_temp'], inplace=True)
         
         df = self.logic.detect_liquidity_sweep(df)
         df = self.logic.detect_cvd_divergence(df)
@@ -52,47 +57,92 @@ class MLBrain:
         df['feat_sweep_low'] = df['sweep_low']
         df['feat_cvd_div'] = df['cvd_div']
         
+        # 5. Temporal Sazonalities (Protects against Anchored VWAP jumps)
+        # Assumes df index is a DatetimeIndex
+        # Codificacao circular em radianos para continuidade cronologica harmonica (Decision Tree amigavel)
+        df['feat_day_of_week_sin'] = np.sin(2 * np.pi * df.index.dayofweek / 7)
+        df['feat_day_of_week_cos'] = np.cos(2 * np.pi * df.index.dayofweek / 7)
+        df['feat_hour_sin'] = np.sin(2 * np.pi * df.index.hour / 24)
+        df['feat_hour_cos'] = np.cos(2 * np.pi * df.index.hour / 24)
+        
         # Drop rows with NaN from rolling calculations
         return df.dropna()
 
     def create_labels(self, df, tp=0.015, sl=0.008, horizon=24):
         """
         Creates labels: 1 for Long Profitable, -1 for Short Profitable, 0 for Neutral.
-        A trade is profitable if it hits TP before SL within the horizon.
+        A trade is profitable if it hits TP before SL within the horizon (Triple Barrier Method).
         """
         labels = []
-        prices = df['close'].values
+        highs = df['high'].values
+        lows = df['low'].values
+        closes = df['close'].values
         
-        for i in range(len(prices) - horizon):
-            window = prices[i+1 : i+1+horizon]
-            entry = prices[i]
+        for i in range(len(closes) - horizon):
+            entry = closes[i]
             
-            label = 0
-            for p in window:
-                ret = (p / entry) - 1
-                if ret >= tp: # Hit TP first
-                    label = 1
-                    break
-                if ret <= -sl: # Hit SL first
-                    label = -1
-                    break
+            long_outcome = 0
+            short_outcome = 0
             
-            labels.append(label)
+            for j in range(i+1, i+1+horizon):
+                high_ret = (highs[j] / entry) - 1
+                low_ret = (lows[j] / entry) - 1
                 
-        # Padding for the last horizon rows
-        labels.extend([0] * horizon)
+                # Check Long
+                if long_outcome == 0:
+                    hit_tp_long = high_ret >= tp
+                    hit_sl_long = low_ret <= -sl
+                    if hit_tp_long and hit_sl_long:
+                        long_outcome = -1 # Pessimistic assumption (intrabar bias prevention)
+                    elif hit_sl_long:
+                        long_outcome = -1
+                    elif hit_tp_long:
+                        long_outcome = 1
+                        short_outcome = -1 # Invalida o short pois o Long ja atingiu TP primeiro
+
+                # Check Short
+                if short_outcome == 0:
+                    hit_tp_short = low_ret <= -tp
+                    hit_sl_short = high_ret >= sl
+                    if hit_tp_short and hit_sl_short:
+                        short_outcome = -1 # Pessimistic assumption
+                    elif hit_sl_short:
+                        short_outcome = -1
+                    elif hit_tp_short:
+                        short_outcome = 1
+                        long_outcome = -1 # Invalida o long pois o Short ja atingiu TP primeiro
+                
+                # Stop looking forward if both outcomes are already decided
+                if long_outcome != 0 and short_outcome != 0:
+                    break
+            
+            # Combine into single label for Random Forest
+            if long_outcome == 1 and short_outcome != 1:
+                labels.append(1)
+            elif short_outcome == 1 and long_outcome != 1:
+                labels.append(-1)
+            else:
+                # Neither is exclusively profitable, or both hit SL first, or timeout
+                labels.append(0)
+                
+        # Removed future target padding (Data Leakage Fix)
+        # Size of returned array determines valid X slice
         return np.array(labels)
 
-    def train(self, df, train_full=False, tp=0.015, sl=0.008):
+    def train(self, df, train_full=False, tp=0.015, sl=0.008, horizon=24):
         """
         Trains the Random Forest model on historical data.
         If train_full is True, it uses 100% of data for training (no test split).
         Receives tp and sl dynamically to synchronize ML expectations with bot parameters.
         """
         data = self.prepare_features(df)
-        feature_cols = [c for c in data.columns if c.startswith('feat_')]
-        X = data[feature_cols].values
-        y = self.create_labels(data, tp=tp, sl=sl)
+        self.feature_cols = [c for c in data.columns if c.startswith('feat_')]
+        X = data[self.feature_cols].values
+        
+        y = self.create_labels(data, tp=tp, sl=sl, horizon=horizon)
+        
+        # Remove unknown future samples from the features to prevent Data Leakage
+        X = X[:len(y)]
         
         # Log label distribution to detect bias
         unique, counts = np.unique(y, return_counts=True)
@@ -103,26 +153,54 @@ class MLBrain:
             print("⚠️ Insufficient label diversity to train ML Brain.")
             return False
 
+        from sklearn.metrics import classification_report
+
         if train_full:
             # Train on EVERYTHING (for Live Bot)
             self.model.fit(X, y) # Vectorized, scale-invariant fit
             print(f"🧠 ML Brain Trained! (Full History Mode: {len(X)} samples)")
         else:
             # Split and Train (for Backtest/OOS Validation)
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+            split_idx = int(len(X) * 0.8)
+            X_train, y_train = X[:split_idx], y[:split_idx]
+            
+            # Start test set AFTER the lookahead horizon to purge train/test leakage
+            # Adding a small embargo (e.g. 10 bars) to further prevent autocorrelation leakage
+            embargo = 10
+            test_start = split_idx + horizon + embargo
+            X_test, y_test = X[test_start:], y[test_start:]
+            
+            if len(X_train) == 0 or len(X_test) == 0:
+                print("⚠️ Insufficient data to train after applying purge gap.")
+                return False
+                
             self.model.fit(X_train, y_train)
             score = self.model.score(X_test, y_test)
             print(f"🧠 ML Brain Trained! Accuracy (OOS): {score:.2%}")
             
+            # Relatorio Detalhado OOS
+            y_pred = self.model.predict(X_test)
+            report = classification_report(y_test, y_pred, zero_division=0)
+            print("\n📊 Out-of-Sample Classification Report (Precision focado em Entradas):")
+            print(report)
+            
         self.is_trained = True
         return True
 
-    def predict_signal(self, current_features_row, feature_names):
+    def predict_signal(self, current_features_row, feature_names=None, min_confidence=0.55):
         """
         Returns (predicted_class, probability, reason)
         """
         if not self.is_trained:
             return 0, 0.0, "Brain not trained"
+            
+        if feature_names is None:
+            feature_names = getattr(self, 'feature_cols', [])
+            
+        # Tratamento Robusto de Staleness, Divisões por Zero (Inf) e Missing Data
+        if not np.isfinite(current_features_row).all():
+            print("⚠️ Segurança/Staleness Alert: NaN ou Inf detectado nas features. Pulando predição para evitar ordens corrompidas e Crash na Random Forest.")
+            return 0, 0.0, "Missing/Corrupted Features (NaN ou Inf)"
         
         feat_vec = current_features_row.reshape(1, -1)
         
@@ -130,21 +208,29 @@ class MLBrain:
         probs = self.model.predict_proba(feat_vec)[0]
         max_prob = max(probs)
         
+        # Filtro de Limiar de Confiança (Relativo devido à recalibração artificial do class_weight='balanced')
+        if max_prob < min_confidence:
+            pred_class = 0
+            reason = f"Convicção Baixa Ponderada ({max_prob:.1%})"
+            return pred_class, max_prob, reason
+        
         # Heurística para explicar o motivo
         # Criamos um dicionário chave:valor para facilitar a leitura
         feats = dict(zip(feature_names, current_features_row))
-        reason = "Confluencia"
+        reason = "Sinal Neutro / Sem Oportunidades"
         
         if pred_class == 1: # COMPRA
-            if feats.get('feat_cvd_div', 0) == 1: reason = "Divergencia CVD"
-            elif feats.get('feat_sweep_low', 0) == 1: reason = "Sweep de Fundo"
-            elif feats.get('feat_rsi', 0.5) < 0.3: reason = "Vendido (RSI)"
+            if feats.get('feat_cvd_div', 0) == 1: reason = "Divergencia CVD (Compra)"
+            elif feats.get('feat_sweep_low', 0) == 1: reason = "Sweep de Fundo (Compra)"
+            elif feats.get('feat_rsi', 0.5) < 0.3: reason = "Sobrevendido (RSI)"
             elif feats.get('feat_slope_sma50', 0) > 0.0001: reason = "Tendencia Alta"
-        elif pred_class == -1: # VENDA
-            if feats.get('feat_cvd_div', 0) == -1: reason = "Pressao Vendedora"
-            elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo"
+            else: reason = "Confluencia (Compra)"
+        elif pred_class == -1: # VENDA (Agora protegido pelo Triple Barrier)
+            if feats.get('feat_cvd_div', 0) == -1: reason = "Divergencia CVD (Venda)"
+            elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo (Venda)"
             elif feats.get('feat_slope_sma50', 0) < -0.0001: reason = "Tendencia Baixa"
-            elif feats.get('feat_dist_sma50', 0) > 0.05: reason = "Esticado (Media)"
+            elif feats.get('feat_dist_sma50', 0) > 0.05: reason = "Sobrecomprado (Media)"
+            else: reason = "Confluencia (Venda)"
             
         return pred_class, max_prob, reason
 
