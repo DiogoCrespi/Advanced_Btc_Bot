@@ -133,18 +133,18 @@ class MLBrain:
         # Heurística para explicar o motivo
         # Criamos um dicionário chave:valor para facilitar a leitura
         feats = dict(zip(feature_names, current_features_row))
-        reason = "Confluência"
+        reason = "Confluencia"
         
         if pred_class == 1: # COMPRA
-            if feats.get('feat_cvd_div', 0) == 1: reason = "Divergência CVD"
+            if feats.get('feat_cvd_div', 0) == 1: reason = "Divergencia CVD"
             elif feats.get('feat_sweep_low', 0) == 1: reason = "Sweep de Fundo"
             elif feats.get('feat_rsi', 0.5) < 0.3: reason = "Vendido (RSI)"
-            elif feats.get('feat_slope_sma50', 0) > 0.0001: reason = "Tendência Alta"
+            elif feats.get('feat_slope_sma50', 0) > 0.0001: reason = "Tendencia Alta"
         elif pred_class == -1: # VENDA
-            if feats.get('feat_cvd_div', 0) == -1: reason = "Pressão Vendedora"
+            if feats.get('feat_cvd_div', 0) == -1: reason = "Pressao Vendedora"
             elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo"
-            elif feats.get('feat_slope_sma50', 0) < -0.0001: reason = "Tendência Baixa"
-            elif feats.get('feat_dist_sma50', 0) > 0.05: reason = "Esticado (Média)"
+            elif feats.get('feat_slope_sma50', 0) < -0.0001: reason = "Tendencia Baixa"
+            elif feats.get('feat_dist_sma50', 0) > 0.05: reason = "Esticado (Media)"
             
         return pred_class, max_prob, reason
 
