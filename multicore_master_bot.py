@@ -80,6 +80,9 @@ class MulticoreMasterBot:
         
         # Lock for thread-safe position updates
         self.pos_lock = Lock()
+
+        # Thread Pool Executor (Persistent)
+        self.executor = ThreadPoolExecutor(max_workers=len(self.assets))
         
         print(f"[INIT] Inicializando Motores e Treinando Cerebro...")
         for asset in assets:
@@ -87,10 +90,11 @@ class MulticoreMasterBot:
             df = self.engine.fetch_binance_klines(asset, limit=limit)
             if not df.empty:
                 df = self.engine.apply_indicators(df)
-                self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
+                # Capta o score OOS real do treino em vez de valor aleatorio
+                oos_score = self.brains[asset].train(df, train_full=False, tp=self.take_profit, sl=self.stop_loss)
                 self.stats[asset]["history_days"] = len(df) / 24
                 self.stats[asset]["samples"] = len(df)
-                self.stats[asset]["oos_score"] = 0.6 + (np.random.rand() * 0.1)
+                self.stats[asset]["oos_score"] = oos_score
         
         print(f"Master Bot Multicore Pronto!")
 
@@ -341,9 +345,8 @@ class MulticoreMasterBot:
                     except Exception as e:
                         print(f"Erro processando {asset}: {e}")
 
-                # Execute asset processing concurrently
-                with ThreadPoolExecutor(max_workers=len(self.assets)) as executor:
-                    executor.map(process_asset, self.assets)
+                # Execute asset processing concurrently using persistent executor
+                list(self.executor.map(process_asset, self.assets))
                 
                 self.history_log = self.history_log[:5]
                 print(f"+{'-'*72}+")
@@ -361,7 +364,7 @@ class MulticoreMasterBot:
             if iter_count % 100 == 0:
                 self.update_mirofish_sentiment()
                 
-            time.sleep(10)
+            time.sleep(30)
 
 if __name__ == "__main__":
     bot = MulticoreMasterBot()

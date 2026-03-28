@@ -159,6 +159,8 @@ class MLBrain:
             # Train on EVERYTHING (for Live Bot)
             self.model.fit(X, y) # Vectorized, scale-invariant fit
             print(f"🧠 ML Brain Trained! (Full History Mode: {len(X)} samples)")
+            self.is_trained = True
+            return 1.0 # default high score for full train if no OOS available
         else:
             # Split and Train (for Backtest/OOS Validation)
             split_idx = int(len(X) * 0.8)
@@ -172,7 +174,7 @@ class MLBrain:
             
             if len(X_train) == 0 or len(X_test) == 0:
                 print("⚠️ Insufficient data to train after applying purge gap.")
-                return False
+                return 0.0
                 
             self.model.fit(X_train, y_train)
             score = self.model.score(X_test, y_test)
@@ -184,8 +186,8 @@ class MLBrain:
             print("\n📊 Out-of-Sample Classification Report (Precision focado em Entradas):")
             print(report)
             
-        self.is_trained = True
-        return True
+            self.is_trained = True
+            return score
 
     def predict_signal(self, current_features_row, feature_names=None, min_confidence=0.55):
         """

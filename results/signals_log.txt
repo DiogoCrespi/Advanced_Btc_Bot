@@ -4,3 +4,6 @@
 [18:33:15] BTCBRL: VENDA  (62%) (Tend�ncia Baixa)
 [18:33:15] ETHBRL: ABERTO (+0.00%) (Conflu�ncia)
 [18:33:15] SOLBRL: ABERTO (-0.00%) (Tend�ncia Baixa)
+[10:34:11] SOLBRL   : NEUTRO (41%)       - Convicção Baixa Ponderada (40.7%) | Confianca: 32% | SL: 1.5% | TP: 3.0%
+[10:34:11] BTCBRL   : NEUTRO (53%)       - Convicção Baixa Ponderada (53.3%) | Confianca: 26% | SL: 1.5% | TP: 3.0%
+[10:34:11] ETHBRL   : NEUTRO (50%)       - Convicção Baixa Ponderada (49.8%) | Confianca: 37% | SL: 1.5% | TP: 3.0%
