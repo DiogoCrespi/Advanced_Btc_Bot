@@ -32,12 +32,17 @@ class OrderFlowLogic:
     def calculate_volume_profile(self, df, bins=24):
         """
         Calculates the Volume Profile and identifies the POC (Point of Control).
+
+        ⚡ BOLT OPTIMIZATION:
+        Replaced the slow O(n) iterative for-loop utilizing `iloc` with
+        a vectorized NumPy implementation utilizing `np.digitize` and `np.bincount`.
+        This drastically improves performance by leveraging C-level execution.
         """
         if df.empty:
             return None
             
-        prices = df['close']
-        volumes = df['volume']
+        prices = df['close'].values
+        volumes = df['volume'].values
         
         # Determine price range
         min_p = prices.min()
@@ -48,16 +53,11 @@ class OrderFlowLogic:
             
         # Create bins
         price_bins = np.linspace(min_p, max_p, bins + 1)
-        volume_by_bin = np.zeros(bins)
         
-        # Allocate volume to bins
-        for i in range(len(prices)):
-            p = prices.iloc[i]
-            v = volumes.iloc[i]
-            # Find which bin the price falls into
-            bin_idx = np.digitize(p, price_bins) - 1
-            if 0 <= bin_idx < bins:
-                volume_by_bin[bin_idx] += v
+        # Allocate volume to bins (Vectorized)
+        bin_indices = np.digitize(prices, price_bins) - 1
+        valid_mask = (bin_indices >= 0) & (bin_indices < bins)
+        volume_by_bin = np.bincount(bin_indices[valid_mask], weights=volumes[valid_mask], minlength=bins)
         
         # POC is the bin with highest volume
         poc_idx = np.argmax(volume_by_bin)
