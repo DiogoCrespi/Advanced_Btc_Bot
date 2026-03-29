@@ -248,7 +248,7 @@ if __name__ == "__main__":
     # Test prep
     processed = brain.prepare_features(df)
     feature_cols = [c for c in processed.columns if c.startswith('feat_')]
-    last_row = processed[feature_cols].iloc[-1].values
+    last_row = processed[feature_cols].values[-1]
     
     signal = brain.predict_signal(last_row)
     print(f"🔮 Final Signal Recommendation: {signal}")

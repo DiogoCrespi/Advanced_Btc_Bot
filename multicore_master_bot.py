@@ -261,10 +261,10 @@ class MulticoreMasterBot:
                         df_ml = self.engine.apply_indicators(df_ml)
                         processed_ml = self.brains[asset].prepare_features(df_ml)
                         feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
-                        last_features = processed_ml[feature_cols].iloc[-1].values
+                        last_features = processed_ml[feature_cols].values[-1]
                         signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
                         
-                        current_price = df_ml['close'].iloc[-1]
+                        current_price = df_ml['close'].values[-1]
                         
                         with self.pos_lock:
                             # 1. Check Positions
