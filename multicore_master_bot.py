@@ -25,6 +25,7 @@ from logic.mirofish_client import MiroFishClient
 from logic.basis_logic import BasisLogic
 from logic.ml_brain import MLBrain
 from logic.order_flow_logic import OrderFlowLogic
+from logic.xaut_logic import XAUTAnalyzer
 
 # Forçar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
@@ -74,6 +75,21 @@ class MulticoreMasterBot:
         self.trade_amount = 100.0     # Valor fixado por trade (R$)
         self.balance_file = "results/balance_state.txt"
         self.paper_log = "results/paper_trades_log.txt"
+
+        # ── TIER 3: Estratégia XAUT/BTC (Capital denominado em BTC) ──────────
+        # Pool de BTC separado do capital BRL — objetivo: acumular mais BTC
+        self.xaut_btc_capital     = float(os.getenv("XAUT_BTC_CAPITAL",     "0.01"))   # BTC total alocado
+        self.xaut_trade_size_btc  = float(os.getenv("XAUT_TRADE_SIZE_BTC",  "0.003"))  # BTC por posição
+        self.xaut_max_positions   = int(os.getenv("XAUT_MAX_POSITIONS",      "3"))      # Máximo de posições
+        self.xaut_sl_pct          = float(os.getenv("XAUT_STOP_LOSS_PCT",    "0.02"))   # SL 2% em BTC
+        self.xaut_tp_pct          = float(os.getenv("XAUT_TAKE_PROFIT_PCT",  "0.04"))   # TP 4% em BTC
+        self.xaut_signal_threshold= 0.55   # Confiança mínima para abrir posição
+        self.xaut_positions       = []     # Lista de posições abertas: List[dict]
+        self.xaut_pos_counter     = 0      # Contador global de IDs de posição
+        self.xaut_log             = "results/xaut_trades.txt"
+        self.xaut_analyzer        = XAUTAnalyzer()
+        self.xaut_lock            = Lock()
+        self.xaut_history         = []     # Últimas operações fechadas (display)
 
         # MiroFish Settings
         self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
@@ -207,7 +223,12 @@ class MulticoreMasterBot:
                     self.trade_amount = data.get("trade_amount", 100.0)
                     self.last_sentiment = data.get("sentiment", self.last_sentiment)
                     self.mf_simulation_id = data.get("mf_simulation_id", self.mf_simulation_id)
-                    print(f"✅ Estado anterior carregado: {len(data.get('positions', {}))} posicoes.")
+                    # Restaurar posições XAUT/BTC
+                    self.xaut_positions = data.get("xaut_positions", [])
+                    self.xaut_pos_counter = data.get("xaut_pos_counter", 0)
+                    self.xaut_btc_capital = data.get("xaut_btc_capital", self.xaut_btc_capital)
+                    n_xaut = len(self.xaut_positions)
+                    print(f"✅ Estado anterior carregado: {len(data.get('positions', {}))} posicoes BRL | {n_xaut} posicoes XAUT.")
                     return data.get('positions', {})
             except Exception as e:
                 print(f"Erro ao carregar estado: {e}")
@@ -221,11 +242,159 @@ class MulticoreMasterBot:
                 "trade_amount": self.trade_amount,
                 "sentiment": self.last_sentiment,
                 "mf_simulation_id": self.mf_simulation_id,
-                "positions": self.positions.copy()
+                "positions": self.positions.copy(),
+                # XAUT state
+                "xaut_positions":    list(self.xaut_positions),
+                "xaut_pos_counter":  self.xaut_pos_counter,
+                "xaut_btc_capital":  self.xaut_btc_capital,
             }
             self.log_queue.put(("save_state", (self.status_file, state)))
         except Exception as e:
             print(f"Erro ao enfileirar estado: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TIER 3 — Estratégia XAUT/BTC
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _process_xaut(self, timestamp: str) -> list:
+        """
+        Processa um ciclo completo da estratégia XAUT/BTC:
+          1. Busca ratio XAUTBTC com features
+          2. Gerencia posições abertas (TP / SL medidos em BTC)
+          3. Abre novas posições se sinal aprovado e slots disponíveis
+
+        Retorna lista de strings para exibição no dashboard.
+        """
+        display_lines = []
+
+        # 1. Busca dados do ratio
+        df_xaut = self.engine.fetch_xaut_ratio(limit=300)
+        if df_xaut.empty:
+            display_lines.append("| [XAUT/BTC] Sem dados disponíveis — aguardando...            |")
+            return display_lines
+
+        last_row      = df_xaut.iloc[-1]
+        current_ratio = float(last_row['close'])
+        rsi_ratio     = float(last_row.get('ratio_rsi', 50))
+        bb_pct        = float(last_row.get('bb_pct', 0.5))
+
+        signal, confidence, reason = self.xaut_analyzer.get_signal(df_xaut)
+
+        closed_this_cycle = []
+
+        with self.xaut_lock:
+            # ── 2. Gerenciar posições abertas ────────────────────────────
+            remaining = []
+            for pos in self.xaut_positions:
+                pos['current_ratio'] = current_ratio
+                pnl_pct = self.xaut_analyzer.calc_pnl_pct(pos, current_ratio)
+                pnl_btc = self.xaut_analyzer.calc_pnl_btc(pos, current_ratio)
+
+                exit_reason = None
+                if pnl_pct >= self.xaut_tp_pct:
+                    exit_reason = "TAKE PROFIT"
+                elif pnl_pct <= -self.xaut_sl_pct:
+                    exit_reason = "STOP LOSS"
+
+                if exit_reason:
+                    # Calcula BTC recuperado (qty × ratio_atual) − taxa estimada
+                    fee_btc      = pos['cost_btc'] * 0.001 * 2  # 0.1% entrada + saída
+                    recovered_btc = (pos['xaut_qty'] * current_ratio) - fee_btc
+                    net_pnl_btc   = recovered_btc - pos['cost_btc']
+                    self.xaut_btc_capital += recovered_btc
+
+                    log_exit = (
+                        f"[{timestamp}] FECHADO XAUTBTC #{pos['id']:03d}: {exit_reason} "
+                        f"| Entry ratio: {pos['ratio_entry']:.6f} | Exit: {current_ratio:.6f} "
+                        f"| PnL: {net_pnl_btc:+.6f} BTC ({pnl_pct:+.2%}) "
+                        f"| BTC pool: {self.xaut_btc_capital:.6f}"
+                    )
+                    self.xaut_history.insert(0, log_exit)
+                    self.async_log(self.xaut_log,    log_exit)
+                    self.async_log(self.log_file,    log_exit)
+                    closed_this_cycle.append(log_exit)
+                    self.save_state()
+                else:
+                    remaining.append(pos)
+
+            self.xaut_positions = remaining
+
+            # ── 3. Abrir novas posições (com DCA safety) ─────────────────
+            can_open = (
+                signal == 1
+                and confidence >= self.xaut_signal_threshold
+                and len(self.xaut_positions) < self.xaut_max_positions
+                and self.xaut_btc_capital >= self.xaut_trade_size_btc
+                and self.xaut_analyzer.is_dca_allowed(
+                    self.xaut_positions, current_ratio, min_distance_pct=0.015
+                )
+            )
+
+            if can_open:
+                self.xaut_pos_counter += 1
+                qty_xaut  = self.xaut_trade_size_btc / current_ratio
+                new_pos = {
+                    "id":           self.xaut_pos_counter,
+                    "ratio_entry":  current_ratio,
+                    "xaut_qty":     qty_xaut,
+                    "cost_btc":     self.xaut_trade_size_btc,
+                    "time":         timestamp,
+                    "current_ratio": current_ratio,
+                }
+                self.xaut_positions.append(new_pos)
+                self.xaut_btc_capital -= self.xaut_trade_size_btc
+
+                log_entry = (
+                    f"[{timestamp}] ABERTO  XAUTBTC #{self.xaut_pos_counter:03d}: "
+                    f"ratio={current_ratio:.6f} | Qtd: {qty_xaut:.4f} XAUT "
+                    f"| Custo: {self.xaut_trade_size_btc:.4f} BTC "
+                    f"| {reason} ({confidence:.0%}) "
+                    f"| BTC pool: {self.xaut_btc_capital:.6f}"
+                )
+                self.xaut_history.insert(0, log_entry)
+                self.async_log(self.xaut_log, log_entry)
+                self.async_log(self.log_file, log_entry)
+                self.save_state()
+
+        # Recortar histórico de display
+        self.xaut_history = self.xaut_history[:5]
+
+        # ── 4. Montar linhas de display ──────────────────────────────────
+        n_open     = len(self.xaut_positions)
+        total_cost = sum(p['cost_btc'] for p in self.xaut_positions)
+        total_val  = sum(p['xaut_qty'] * current_ratio for p in self.xaut_positions)
+        pool_pnl   = total_val - total_cost   # PnL latente total em BTC
+
+        sig_icon = "+" if signal == 1 else ("-" if signal == -1 else ".")
+        display_lines.append(f"+{'-'*72}+")
+        display_lines.append(
+            f"| [XAUT/BTC] Ratio: {current_ratio:.6f} BTC/XAUT "
+            f"| RSI ratio: {rsi_ratio:5.1f} | BB%: {bb_pct:.2f}        |"
+        )
+        display_lines.append(
+            f"| Pool BTC: {self.xaut_btc_capital:.5f} BTC livre "
+            f"| Posicoes: {n_open}/{self.xaut_max_positions} "
+            f"| PnL latente: {pool_pnl:+.6f} BTC         |"
+        )
+        display_lines.append(
+            f"|   {sig_icon} Sinal: {reason:<30} "
+            f"| Conf: {confidence:.0%} | Threshold: {self.xaut_signal_threshold:.0%} |"
+        )
+
+        for pos in self.xaut_positions:
+            pnl_p = self.xaut_analyzer.calc_pnl_pct(pos, current_ratio)
+            pnl_b = self.xaut_analyzer.calc_pnl_btc(pos, current_ratio)
+            display_lines.append(
+                f"|   #{pos['id']:03d} entry={pos['ratio_entry']:.6f} "
+                f"qty={pos['xaut_qty']:.4f} XAUT "
+                f"PnL={pnl_b:+.5f}BTC ({pnl_p:+.2%}) "
+                f"       |"
+            )
+
+        if closed_this_cycle:
+            display_lines.append(f"| [XAUT FECHADO] {closed_this_cycle[0][:68]:68} |")
+
+        return display_lines
 
     def update_mirofish_sentiment(self):
         """Periodically update sentiment from MiroFish."""
@@ -486,7 +655,16 @@ class MulticoreMasterBot:
 
                 # Execute asset processing concurrently using persistent executor
                 list(self.executor.map(process_asset, self.assets))
-                
+
+                # ── TIER 3: Estratégia XAUT/BTC ──────────────────────────
+                try:
+                    xaut_lines = self._process_xaut(timestamp)
+                    for line in xaut_lines:
+                        clean = line.encode('ascii', 'ignore').decode('ascii')
+                        print(clean)
+                except Exception as e:
+                    print(f"[XAUT] Erro no ciclo XAUT: {e}")
+
                 self.history_log = self.history_log[:5]
                 print(f"+{'-'*72}+")
                 print(f"| # LOG RECENTE:                                                        |")
