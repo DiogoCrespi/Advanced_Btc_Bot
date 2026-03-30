@@ -292,7 +292,7 @@ class MulticoreMasterBot:
                                     self.save_state() # Update state immediately after exit
                             
                             # 2. Open Positions
-                            elif signal != 0 and prob >= self.trade_threshold:
+                            elif signal != 0:
                                 # Apply Sentiment Bias
                                 bias = 0.0
                                 if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
@@ -301,6 +301,7 @@ class MulticoreMasterBot:
                                     bias = 0.05
                                 
                                 effective_prob = prob + bias
+
                                 
                                 if effective_prob >= self.trade_threshold:
                                     if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:

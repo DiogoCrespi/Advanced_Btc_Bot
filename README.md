@@ -45,4 +45,7 @@ Certifique-se de configurar as chaves no arquivo `.env` na raiz:
 - Configurações da MiroFish em `MiroFish/.env` (LLM Key, etc).
 
 ---
+##Leia o arquivo para entender o projeto:
+`C:\Nestjs\Btc_bot\antigravity.md`
+---
 *Desenvolvido para DiogoCrespi - Quant Integration v2.0*

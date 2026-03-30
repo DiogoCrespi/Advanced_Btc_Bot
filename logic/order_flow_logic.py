@@ -56,6 +56,7 @@ class OrderFlowLogic:
         
         # Allocate volume to bins (Vectorized)
         bin_indices = np.digitize(prices, price_bins) - 1
+        bin_indices = np.clip(bin_indices, 0, bins - 1)
         valid_mask = (bin_indices >= 0) & (bin_indices < bins)
         volume_by_bin = np.bincount(bin_indices[valid_mask], weights=volumes[valid_mask], minlength=bins)
         

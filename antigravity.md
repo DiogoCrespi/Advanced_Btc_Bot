@@ -33,9 +33,8 @@ Utiliza Inteligência Artificial para antecipar movimentos de preço.
 - **Containerização**: Suporte completo para Docker e Docker Compose.
 
 ## 🛠️ Módulos Adicionais
-- [🐟 MiroFish README](MiroFish/README.md) - Documentação principal do componente MiroFish.
+- [🐟 MiroFish README](MiroFish/README.md) - Documentação principal do componente MiroFish de inteligência coletiva (Vue/Go/Python).
 - [🌍 MiroFish (EN)](MiroFish/README-EN.md) - English documentation for MiroFish.
-- [📊 B3 Screener](Advanced_Btc_Bot/b3_screener/README.md) - Documentação do rastreador de ativos da B3.
 
 
 ---

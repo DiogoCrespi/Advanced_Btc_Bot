@@ -1,6 +1,0 @@
-{
-    "*.ts": [
-        "eslint 'packages/backend/src/**' --fix --max-warnings 0",
-        "yarn test:staged"
-    ]
-}
