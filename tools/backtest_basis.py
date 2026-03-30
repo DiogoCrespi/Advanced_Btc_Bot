@@ -53,8 +53,8 @@ class BasisBacktester:
         # 4. Holder Phase & Expiry
         # No Cash & Carry clássico, seguramos até o vencimento.
         # No vencimento: Future_Price == Spot_Price
-        exit_price_spot = combined['Close_spot'].iloc[-1]
-        exit_price_fut = combined['Close_fut'].iloc[-1]
+        exit_price_spot = combined['Close_spot'].values[-1]
+        exit_price_fut = combined['Close_fut'].values[-1]
         exit_time = combined.index[-1]
         
         # P&L Spot (Long): (Exit - Entry) / Entry

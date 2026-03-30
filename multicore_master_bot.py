@@ -256,15 +256,15 @@ class MulticoreMasterBot:
                 
                 def process_asset(asset):
                     try:
-                        df_ml = self.engine.fetch_binance_klines(asset, limit=100)
+                        df_ml = self.engine.fetch_binance_klines(asset, limit=300)
                         if df_ml.empty: return
                         df_ml = self.engine.apply_indicators(df_ml)
                         processed_ml = self.brains[asset].prepare_features(df_ml)
                         feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
-                        last_features = processed_ml[feature_cols].iloc[-1].values
+                        last_features = processed_ml[feature_cols].values[-1]
                         signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
                         
-                        current_price = df_ml['close'].iloc[-1]
+                        current_price = df_ml['close'].values[-1]
                         
                         with self.pos_lock:
                             # 1. Check Positions
@@ -293,36 +293,42 @@ class MulticoreMasterBot:
                             
                             # 2. Open Positions
                             elif signal != 0:
-                                # Apply Sentiment Bias
-                                bias = 0.0
-                                if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
-                                    bias = 0.05
-                                elif self.last_sentiment["sentiment"] == "Bearish" and signal == -1:
-                                    bias = 0.05
-                                
-                                effective_prob = prob + bias
+                                # Bloqueio de Segurança: Evita Short em Mercado Spot (BRL/USDT)
+                                if signal == -1 and ('BRL' in asset or 'USDT' in asset):
+                                    reason = "Short Blocked (Spot)"
+                                    signal = 0
 
-                                
-                                if effective_prob >= self.trade_threshold:
-                                    if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
-                                        qty = self.trade_amount / current_price
-                                        side = "COMPRA" if signal == 1 else "VENDA"
-                                        self.positions[asset] = {
-                                            "entry": current_price,
-                                            "signal": signal,
-                                            "qty": qty,
-                                            "prob": prob,
-                                            "effective_prob": effective_prob,
-                                            "time": datetime.now().strftime('%H:%M:%S'),
-                                            "current_price": current_price
-                                        }
-                                        self.balance -= self.trade_amount # Deduct trade amount for paper trading
-                                        log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {current_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
-                                        self.history_log.insert(0, log_entry)
-                                        self.async_log(self.paper_log, log_entry)
-                                        self.async_log(self.log_file, log_entry)
-                                        self.save_balance()
-                                        self.save_state() # Update state immediately after entry
+                                if signal != 0:
+                                    # Apply Sentiment Bias
+                                    bias = 0.0
+                                    if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
+                                        bias = 0.05
+                                    elif self.last_sentiment["sentiment"] == "Bearish" and signal == -1:
+                                        bias = 0.05
+                                    
+                                    effective_prob = prob + bias
+
+                                    
+                                    if effective_prob >= self.trade_threshold:
+                                        if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
+                                            qty = self.trade_amount / current_price
+                                            side = "COMPRA" if signal == 1 else "VENDA"
+                                            self.positions[asset] = {
+                                                "entry": current_price,
+                                                "signal": signal,
+                                                "qty": qty,
+                                                "prob": prob,
+                                                "effective_prob": effective_prob,
+                                                "time": datetime.now().strftime('%H:%M:%S'),
+                                                "current_price": current_price
+                                            }
+                                            self.balance -= self.trade_amount # Deduct trade amount for paper trading
+                                            log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {current_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
+                                            self.history_log.insert(0, log_entry)
+                                            self.async_log(self.paper_log, log_entry)
+                                            self.async_log(self.log_file, log_entry)
+                                            self.save_balance()
+                                            self.save_state() # Update state immediately after entry
 
                             # Status Row
                             sig_text = "NADA"
@@ -364,6 +370,22 @@ class MulticoreMasterBot:
             # Update MiroFish sentiment every ~100 iterations (approx every 15-20 mins)
             if iter_count % 100 == 0:
                 self.update_mirofish_sentiment()
+                
+            # Retrain ML Models every ~2880 iterations (24 hours at 30s per iter)
+            if iter_count % 2880 == 0:
+                print(f"\n[SISTEMA] Iniciando Retreinamento Diário dos Modelos de ML...")
+                for rt_asset in self.assets:
+                    try:
+                        df_rt = self.engine.fetch_binance_klines(rt_asset, limit=1500)
+                        if not df_rt.empty:
+                            df_rt = self.engine.apply_indicators(df_rt)
+                            oos_sc = self.brains[rt_asset].train(df_rt, train_full=False, tp=self.take_profit, sl=self.stop_loss)
+                            self.stats[rt_asset]["samples"] = len(df_rt)
+                            self.stats[rt_asset]["oos_score"] = oos_sc
+                            print(f"[RE-TRAINED] {rt_asset} OOS Score: {oos_sc:.2%}")
+                    except Exception as e:
+                        print(f"Erro ao retreinar {rt_asset}: {e}")
+                print("\n")
                 
             time.sleep(30)
 

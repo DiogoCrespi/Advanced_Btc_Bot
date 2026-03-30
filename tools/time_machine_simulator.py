@@ -99,7 +99,7 @@ class TimeMachineSimulator:
                     
                     # If no exit hit by end of segment, take current return
                     if not found_exit and j + 1 < len(processed_test):
-                        final_ret = (processed_test['close'].iloc[-1] / current_price) - 1
+                        final_ret = (processed_test['close'].values[-1] / current_price) - 1
                         trade_result = final_ret * signal
                         if trade_result > 0: self.wins += 1
                     
