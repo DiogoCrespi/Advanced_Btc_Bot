@@ -647,19 +647,26 @@ class ZepToolsService:
             total_count=len(facts)
         )
     
-    def get_all_nodes(self, graph_id: str) -> List[NodeInfo]:
+    def get_all_nodes(
+        self, 
+        graph_id: str, 
+        labels: List[str] = None, 
+        names: List[str] = None
+    ) -> List[NodeInfo]:
         """
-        获取图谱的所有节点（分页获取）
+        获取图谱的节点（分页，支持按类型和名称过滤）
 
         Args:
             graph_id: 图谱ID
+            labels: 标签过滤列表
+            names: 名称过滤列表
 
         Returns:
             节点列表
         """
-        logger.info(f"获取图谱 {graph_id} 的所有节点...")
+        logger.info(f"获取图谱 {graph_id} 的节点 (labels={labels}, names={names})...")
 
-        nodes = fetch_all_nodes(self.client, graph_id)
+        nodes = fetch_all_nodes(self.client, graph_id, labels=labels, names=names)
 
         result = []
         for node in nodes:
@@ -783,24 +790,12 @@ class ZepToolsService:
         entity_type: str
     ) -> List[NodeInfo]:
         """
-        按类型获取实体
-        
-        Args:
-            graph_id: 图谱ID
-            entity_type: 实体类型（如 Student, PublicFigure 等）
-            
-        Returns:
-            符合类型的实体列表
+        按类型获取实体 (数据库级过滤)
         """
-        logger.info(f"获取类型为 {entity_type} 的实体...")
+        logger.info(f"获取类型为 {entity_type} 的实体 (DB Filter)...")
         
-        all_nodes = self.get_all_nodes(graph_id)
-        
-        filtered = []
-        for node in all_nodes:
-            # 检查labels是否包含指定类型
-            if entity_type in node.labels:
-                filtered.append(node)
+        # 优化：直接在Zep端过滤labels
+        filtered = self.get_all_nodes(graph_id, labels=[entity_type])
         
         logger.info(f"找到 {len(filtered)} 个 {entity_type} 类型的实体")
         return filtered
@@ -831,13 +826,9 @@ class ZepToolsService:
             limit=20
         )
         
-        # 尝试在所有节点中找到该实体
-        all_nodes = self.get_all_nodes(graph_id)
-        entity_node = None
-        for node in all_nodes:
-            if node.name.lower() == entity_name.lower():
-                entity_node = node
-                break
+        # 优化：在Zep端按名称过滤
+        entity_nodes = self.get_all_nodes(graph_id, names=[entity_name])
+        entity_node = entity_nodes[0] if entity_nodes else None
         
         related_edges = []
         if entity_node:
@@ -1034,36 +1025,40 @@ class ZepToolsService:
                 if target_uuid:
                     entity_uuids.add(target_uuid)
         
-        # 获取所有相关实体的详情（不限制数量，完整输出）
-        entity_insights = []
-        node_map = {}  # 用于后续关系链构建
+        # 优化：分批次通过UUID列表高效获取所有节点 (如果Zep SDK支持 batch_get)
+        # 如果不支持原生批处理，我们按组进行并行请求
+        from concurrent.futures import ThreadPoolExecutor
         
-        for uuid in list(entity_uuids):  # 处理所有实体，不截断
-            if not uuid:
-                continue
+        valid_uuids = [u for u in list(entity_uuids) if u]
+        logger.info(f"正在并行获取 {len(valid_uuids)} 个相关节点详情...")
+        
+        def safe_get_detail(u):
             try:
-                # 单独获取每个相关节点的信息
-                node = self.get_node_detail(uuid)
-                if node:
-                    node_map[uuid] = node
-                    entity_type = next((l for l in node.labels if l not in ["Entity", "Node"]), "实体")
-                    
-                    # 获取该实体相关的所有事实（不截断）
-                    related_facts = [
-                        f for f in all_facts 
-                        if node.name.lower() in f.lower()
-                    ]
-                    
-                    entity_insights.append({
-                        "uuid": node.uuid,
-                        "name": node.name,
-                        "type": entity_type,
-                        "summary": node.summary,
-                        "related_facts": related_facts  # 完整输出，不截断
-                    })
-            except Exception as e:
-                logger.debug(f"获取节点 {uuid} 失败: {e}")
-                continue
+                return self.get_node_detail(u)
+            except:
+                return None
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            resolved_nodes = list(executor.map(safe_get_detail, valid_uuids))
+            
+        for node in resolved_nodes:
+            if node:
+                node_map[node.uuid] = node
+                entity_type = next((l for l in node.labels if l not in ["Entity", "Node"]), "实体")
+                
+                # 获取该实体相关的所有事实（不截断）
+                related_facts = [
+                    f for f in all_facts 
+                    if node.name.lower() in f.lower()
+                ]
+                
+                entity_insights.append({
+                    "uuid": node.uuid,
+                    "name": node.name,
+                    "type": entity_type,
+                    "summary": node.summary,
+                    "related_facts": related_facts
+                })
         
         result.entity_insights = entity_insights
         result.total_entities = len(entity_insights)

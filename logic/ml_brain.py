@@ -25,8 +25,8 @@ class MLBrain:
         """
         df = df.copy()
         
-        # 1. Order Flow Signals (Logic)
-        # Fix: Using a Rolling 7-day VWAP instead of Calendar Anchored to avoid artificial discontinuities every Monday
+        # 1. Rolling 7-day VWAP (AVWAP)
+        # Using a Rolling 7-day VWAP instead of Calendar Anchored to avoid artificial discontinuities every Monday
         df['tp_temp'] = (df['high'] + df['low'] + df['close']) / 3
         df['pv_temp'] = df['tp_temp'] * df['volume']
         
@@ -57,7 +57,7 @@ class MLBrain:
         df['feat_sweep_low'] = df['sweep_low']
         df['feat_cvd_div'] = df['cvd_div']
         
-        # 5. Temporal Sazonalities (Protects against Anchored VWAP jumps)
+        # 5. Temporal Sazonalities (Protects against Rolling VWAP jumps)
         # Assumes df index is a DatetimeIndex
         # Codificacao circular em radianos para continuidade cronologica harmonica (Decision Tree amigavel)
         df['feat_day_of_week_sin'] = np.sin(2 * np.pi * df.index.dayofweek / 7)

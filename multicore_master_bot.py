@@ -11,6 +11,14 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock, Thread
 
+import math
+from dotenv import load_dotenv
+from binance.client import Client
+from binance.exceptions import BinanceAPIException, BinanceOrderException
+from binance.enums import *
+
+load_dotenv()
+
 # Import custom modules
 from data.data_engine import DataEngine
 from logic.mirofish_client import MiroFishClient
@@ -35,12 +43,25 @@ class NumpyEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 class MulticoreMasterBot:
-    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08):
+    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, live_mode=False):
+        self.live_mode = live_mode
+        self.api_key = os.getenv("BINANCE_API_KEY")
+        self.api_secret = os.getenv("BINANCE_API_SECRET")
+        self.client = None
+        
         self.assets = assets
         self.cofre_threshold = cofre_threshold
         self.history_log = [] 
         self.log_file = "results/signals_log.txt"
         self.status_file = "results/bot_status.json"
+        self.start_time = datetime.now()  # Uptime tracking
+        
+        # Validar modo de execução
+        if self.live_mode:
+            print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO! Validando chaves API...")
+            self._validate_api_keys()
+        else:
+            print("[SISTEMA] 🎮 Modo SIMULAÇÃO (Paper Trading) Misto.")
         
         # Risk Management
         self.stop_loss = 0.015  # 1.5%
@@ -97,6 +118,48 @@ class MulticoreMasterBot:
                 self.stats[asset]["oos_score"] = oos_score
         
         print(f"Master Bot Multicore Pronto!")
+
+    def _validate_api_keys(self):
+        if not self.api_key or not self.api_secret:
+            print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
+            sys.exit(1)
+        try:
+            self.client = Client(self.api_key, self.api_secret)
+            account_info = self.client.get_account()
+            if not account_info.get('canTrade'):
+                print("[ERRO FATAL] As chaves API não têm permissão de Trading habilitada!")
+                sys.exit(1)
+            print("✅ Conectado na Binance! Permissão de leitura/trading ativa.")
+        except BinanceAPIException as e:
+            print(f"[ERRO FATAL] Credenciais rejeitadas pela Binance: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[ERRO FATAL] Falha de rede ao conectar com a Binance: {e}")
+            sys.exit(1)
+            
+    def get_real_balance(self, asset='BRL'):
+        """Retorna o saldo real (Free Balance) da carteira Spot."""
+        if not self.live_mode or not self.client: return self.balance
+        try:
+            asset_info = self.client.get_asset_balance(asset=asset)
+            return float(asset_info['free']) if asset_info else 0.0
+        except:
+            return self.balance # fallback
+            
+    def format_quantity(self, asset, raw_qty):
+        """Formata a fração da ordem perfeitamente no stepSize obrigatório da Binance para evitar falha no envio."""
+        try:
+            info = self.client.get_symbol_info(asset)
+            step_size = None
+            for f in info['filters']:
+                if f['filterType'] == 'LOT_SIZE':
+                    step_size = float(f['stepSize'])
+                    break
+            if step_size:
+                precision = int(round(-math.log(step_size, 10), 0))
+                return math.floor(raw_qty * (10**precision)) / (10**precision)
+        except: pass
+        return round(raw_qty, 5)
 
     def load_balance(self):
         if os.path.exists(self.balance_file):
@@ -197,16 +260,32 @@ class MulticoreMasterBot:
             # logger.error(f"Error updating MiroFish sentiment: {e}")
             print(f"Error updating MiroFish sentiment: {e}")
 
+    def _get_uptime_str(self):
+        """Retorna a string de uptime formatada: Xd Xh Xm Xs"""
+        delta = datetime.now() - self.start_time
+        total_seconds = int(delta.total_seconds())
+        days    = total_seconds // 86400
+        hours   = (total_seconds % 86400) // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        return f"{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s"
+
     def run(self):
         print(f"Iniciando Loop de Execucao (Intervalo: 30s)")
+        print(f"[UPTIME] Bot iniciado em: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         iter_count = 0
         while True:
             try:
                 timestamp = datetime.now().strftime('%H:%M:%S')
+                uptime_str = self._get_uptime_str()
                 # os.system('cls' if os.name == 'nt' else 'clear')
                 
                 # Salva estado no inicio do loop
                 self.save_state()
+                
+                # Fetch Real Balance if Live
+                if self.live_mode:
+                    self.balance = self.get_real_balance('BRL')
                 
                 # Calculate Total Equity (Balance + current value of all open positions)
                 total_equity = self.balance
@@ -221,7 +300,10 @@ class MulticoreMasterBot:
                 print(f"+{'-'*72}+")
                 print(f"| >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Equity: R$ {total_equity:9.2f} |")
                 print(f"| Saldo Disponivel: R$ {self.balance:8.2f}  | Posicoes Abertas: {len(self.positions):2}         |")
+                print(f"| Uptime: {uptime_str:<63}|")
                 print(f"+{'-'*72}+")
+                # Log de uptime no arquivo a cada iteracao
+                self.async_log(self.log_file, f"[{timestamp}] [UPTIME] {uptime_str} | Iniciado: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 
                 # TIER 1: PORTFOLIO
                 if self.positions:
@@ -279,11 +361,39 @@ class MulticoreMasterBot:
                                 elif trade_pnl <= -self.stop_loss: exit_reason = "STOP LOSS"
                                 
                                 if exit_reason:
+                                    actual_pnl_pct = trade_pnl
+                                    
+                                    if self.live_mode and self.client:
+                                        print(f"[LIVE] 🚨 Executando SAÍDA ({exit_reason}) para {asset}...")
+                                        try:
+                                            # Formata a quantidade para evitar erro de precisão
+                                            exec_qty = self.format_quantity(asset, pos['qty'])
+                                            order = self.client.create_order(
+                                                symbol=asset,
+                                                side=SIDE_SELL,
+                                                type=ORDER_TYPE_MARKET,
+                                                quantity=exec_qty
+                                            )
+                                            # Calcula PnL real baseado no preço de execução se disponível
+                                            if order.get('fills'):
+                                                avg_price = sum(float(f['price']) * float(f['qty']) for f in order['fills']) / sum(float(f['qty']) for f in order['fills'])
+                                                actual_pnl_pct = ((avg_price / pos['entry']) - 1) * pos['signal']
+                                                log_live = f"[LIVE] {asset} Vendido @ {avg_price:.2f}"
+                                                print(log_live)
+                                        except Exception as e:
+                                            print(f"[LIVE ERROR] Falha ao fechar posição: {e}")
+                                            # Em caso de erro crítico no live, não removemos a posição para tentar novamente ou manual
+                                            return
+
                                     total_trade_fee = self.fee_rate * 2
-                                    net_pnl_pct = trade_pnl - total_trade_fee
+                                    net_pnl_pct = actual_pnl_pct - total_trade_fee
                                     profit_brl = self.trade_amount * net_pnl_pct
-                                    self.balance += (self.trade_amount + profit_brl) # Retorna capital + lucro
+                                    
+                                    # No Live Mode o balance é atualizado via API no topo do loop, 
+                                    # mas atualizamos aqui para o display imediato ser coerente
+                                    self.balance += (self.trade_amount + profit_brl)
                                     self.save_balance()
+                                    
                                     log_exit = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL Liquid: {net_pnl_pct:+.2%} | Saldo: R$ {self.balance:.2f}"
                                     self.history_log.insert(0, log_exit)
                                     self.async_log(self.paper_log, log_exit)
@@ -308,22 +418,44 @@ class MulticoreMasterBot:
                                     
                                     effective_prob = prob + bias
 
-                                    
                                     if effective_prob >= self.trade_threshold:
                                         if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
                                             qty = self.trade_amount / current_price
+                                            entry_price = current_price
+                                            
+                                            if self.live_mode and self.client:
+                                                print(f"[LIVE] 🚀 Abrindo COMPRA para {asset}...")
+                                                try:
+                                                    # No mercado Spot, calculamos a qty baseada no valor BRL fixo
+                                                    # Algumas moedas exigem precisão específica
+                                                    exec_qty = self.format_quantity(asset, qty)
+                                                    order = self.client.create_order(
+                                                        symbol=asset,
+                                                        side=SIDE_BUY,
+                                                        type=ORDER_TYPE_MARKET,
+                                                        quantity=exec_qty
+                                                    )
+                                                    if order.get('fills'):
+                                                        entry_price = sum(float(f['price']) * float(f['qty']) for f in order['fills']) / sum(float(f['qty']) for f in order['fills'])
+                                                        qty = sum(float(f['qty']) for f in order['fills']) # Qtd real executada
+                                                except Exception as e:
+                                                    print(f"[LIVE ERROR] Falha ao abrir posição: {e}")
+                                                    return
+
                                             side = "COMPRA" if signal == 1 else "VENDA"
                                             self.positions[asset] = {
-                                                "entry": current_price,
+                                                "entry": entry_price,
                                                 "signal": signal,
                                                 "qty": qty,
                                                 "prob": prob,
                                                 "effective_prob": effective_prob,
                                                 "time": datetime.now().strftime('%H:%M:%S'),
-                                                "current_price": current_price
+                                                "current_price": entry_price
                                             }
-                                            self.balance -= self.trade_amount # Deduct trade amount for paper trading
-                                            log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {current_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
+                                            
+                                            # No Live Mode, o saldo diminuirá na Binance automaticamente
+                                            self.balance -= self.trade_amount 
+                                            log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {entry_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
                                             self.history_log.insert(0, log_entry)
                                             self.async_log(self.paper_log, log_entry)
                                             self.async_log(self.log_file, log_entry)

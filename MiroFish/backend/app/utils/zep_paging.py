@@ -59,12 +59,14 @@ def _fetch_page_with_retry(
 def fetch_all_nodes(
     client: Zep,
     graph_id: str,
+    labels: list[str] | None = None,
+    names: list[str] | None = None,
     page_size: int = _DEFAULT_PAGE_SIZE,
     max_items: int = _MAX_NODES,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     retry_delay: float = _DEFAULT_RETRY_DELAY,
 ) -> list[Any]:
-    """分页获取图谱节点，最多返回 max_items 条（默认 2000）。每页请求自带重试。"""
+    """分页获取图谱节点，最多返回 max_items 条（默认 2000）。"""
     all_nodes: list[Any] = []
     cursor: str | None = None
     page_num = 0
@@ -73,6 +75,10 @@ def fetch_all_nodes(
         kwargs: dict[str, Any] = {"limit": page_size}
         if cursor is not None:
             kwargs["uuid_cursor"] = cursor
+        if labels:
+            kwargs["labels"] = labels
+        if names:
+            kwargs["names"] = names
 
         page_num += 1
         batch = _fetch_page_with_retry(

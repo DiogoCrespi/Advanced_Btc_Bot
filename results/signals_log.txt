@@ -7,3 +7,9 @@
 [10:34:11] SOLBRL   : NEUTRO (41%)       - Convicção Baixa Ponderada (40.7%) | Confianca: 32% | SL: 1.5% | TP: 3.0%
 [10:34:11] BTCBRL   : NEUTRO (53%)       - Convicção Baixa Ponderada (53.3%) | Confianca: 26% | SL: 1.5% | TP: 3.0%
 [10:34:11] ETHBRL   : NEUTRO (50%)       - Convicção Baixa Ponderada (49.8%) | Confianca: 37% | SL: 1.5% | TP: 3.0%
+[09:25:41] SOLBRL   : NEUTRO (61%)       - Sinal Neutro / Sem Oportunidades | Confianca: 24% | SL: 1.5% | TP: 3.0%
+[09:25:41] BTCBRL   : NEUTRO (45%)       - Convicção Baixa Ponderada (45.2%) | Confianca: 44% | SL: 1.5% | TP: 3.0%
+[09:25:41] ETHBRL   : NEUTRO (48%)       - Convicção Baixa Ponderada (48.1%) | Confianca: 42% | SL: 1.5% | TP: 3.0%
+[09:26:23] BTCBRL   : NEUTRO (46%)       - Convicção Baixa Ponderada (45.8%) | Confianca: 44% | SL: 1.5% | TP: 3.0%
+[09:26:23] ETHBRL   : NEUTRO (48%)       - Convicção Baixa Ponderada (48.1%) | Confianca: 42% | SL: 1.5% | TP: 3.0%
+[09:26:23] SOLBRL   : NEUTRO (61%)       - Sinal Neutro / Sem Oportunidades | Confianca: 24% | SL: 1.5% | TP: 3.0%
