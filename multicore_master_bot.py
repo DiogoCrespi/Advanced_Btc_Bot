@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock, Thread
+# removed: fastapi, uvicorn imports
 
 import math
 from dotenv import load_dotenv
@@ -21,11 +22,12 @@ load_dotenv()
 
 # Import custom modules
 from data.data_engine import DataEngine
-from logic.mirofish_client import MiroFishClient
 from logic.basis_logic import BasisLogic
 from logic.ml_brain import MLBrain
 from logic.order_flow_logic import OrderFlowLogic
 from logic.xaut_logic import XAUTAnalyzer
+from logic.market_memory import MarketMemory
+from logic.strategist_agent import StrategistAgent
 
 # Forçar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
@@ -56,6 +58,7 @@ class MulticoreMasterBot:
         self.log_file = "results/signals_log.txt"
         self.status_file = "results/bot_status.json"
         self.start_time = datetime.now()  # Uptime tracking
+        self.equity_history = [] # For dashboard charts
         
         # Validar modo de execução
         if self.live_mode:
@@ -64,38 +67,35 @@ class MulticoreMasterBot:
         else:
             print("[SISTEMA] 🎮 Modo SIMULAÇÃO (Paper Trading) Misto.")
         
-        # Risk Management
-        self.stop_loss = 0.015  # 1.5%
-        self.take_profit = 0.03 # 3.0%
+        self.trade_amount = 100.0   # Base fallback
+        self.risk_per_trade_pct = 0.05 # 5% per trade
+        self.fee_rate = 0.001       # 0.1% Binance Standard
+        self.take_profit = 0.03     # 3% Base
+        self.stop_loss = 0.015      # 1.5% Base
+        self.trailing_activation = 0.015 # Activate trailing at 1.5% profit
+        self.trailing_callback = 0.005 # 0.5% pullback from peak
         
         # Paper Trading Basics
-        self.fee_rate = 0.001 
-        self.trade_threshold = 0.65 
+        self.trade_threshold = 0.55 
         self.min_binance_amount = 10.0 # Minimo Binance (R$)
-        self.trade_amount = 100.0     # Valor fixado por trade (R$)
         self.balance_file = "results/balance_state.txt"
         self.paper_log = "results/paper_trades_log.txt"
 
-        # ── TIER 3: Estratégia XAUT/BTC (Capital denominado em BTC) ──────────
-        # Pool de BTC separado do capital BRL — objetivo: acumular mais BTC
-        self.xaut_btc_capital     = float(os.getenv("XAUT_BTC_CAPITAL",     "0.01"))   # BTC total alocado
-        self.xaut_trade_size_btc  = float(os.getenv("XAUT_TRADE_SIZE_BTC",  "0.003"))  # BTC por posição
-        self.xaut_max_positions   = int(os.getenv("XAUT_MAX_POSITIONS",      "3"))      # Máximo de posições
-        self.xaut_sl_pct          = float(os.getenv("XAUT_STOP_LOSS_PCT",    "0.02"))   # SL 2% em BTC
-        self.xaut_tp_pct          = float(os.getenv("XAUT_TAKE_PROFIT_PCT",  "0.04"))   # TP 4% em BTC
-        self.xaut_signal_threshold= 0.55   # Confiança mínima para abrir posição
-        self.xaut_positions       = []     # Lista de posições abertas: List[dict]
-        self.xaut_pos_counter     = 0      # Contador global de IDs de posição
+        # ── TIER 3: Estratégia XAUT/BTC ──────────────────────────────────────
+        # Agora o capital vem das posições abertas de BTCBRL
+        self.xaut_max_positions   = int(os.getenv("XAUT_MAX_POSITIONS",      "3"))
+        self.xaut_sl_pct          = float(os.getenv("XAUT_STOP_LOSS_PCT",    "0.02"))
+        self.xaut_tp_pct          = float(os.getenv("XAUT_TAKE_PROFIT_PCT",  "0.04"))
+        self.xaut_signal_threshold= 0.55 
+        self.xaut_positions       = []     # Lista de posições abertas em XAUT
+        self.xaut_pos_counter     = 0
         self.xaut_log             = "results/xaut_trades.txt"
         self.xaut_analyzer        = XAUTAnalyzer()
         self.xaut_lock            = Lock()
-        self.xaut_history         = []     # Últimas operações fechadas (display)
+        self.xaut_history         = [] 
 
-        # MiroFish Settings
+        # Macro Context
         self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
-        self.mf_client = MiroFishClient()
-        self.mf_project_id = "trading_sentiment_auto"
-        self.mf_simulation_id = None # To be updated dynamically
         
         # Load Existing State
         self.balance = self.load_balance()
@@ -108,6 +108,8 @@ class MulticoreMasterBot:
         
         # ML Brains
         self.brains = {asset: MLBrain() for asset in assets}
+        self.agent = StrategistAgent() # New Agentic Layer
+        self.memory = MarketMemory() # Knowledge retrieval layer
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
         
         # Async I/O Logging Queue
@@ -120,6 +122,9 @@ class MulticoreMasterBot:
 
         # Thread Pool Executor (Persistent)
         self.executor = ThreadPoolExecutor(max_workers=len(self.assets))
+        
+        # Dashboard/API Removed
+        self.total_equity = self.balance # Initial state
         
         print(f"[INIT] Inicializando Motores e Treinando Cerebro...")
         for asset in assets:
@@ -134,6 +139,8 @@ class MulticoreMasterBot:
                 self.stats[asset]["oos_score"] = oos_score
         
         print(f"Master Bot Multicore Pronto!")
+
+    # _setup_routes and _run_api removed
 
     def _validate_api_keys(self):
         if not self.api_key or not self.api_secret:
@@ -220,15 +227,15 @@ class MulticoreMasterBot:
                 with open(self.status_file, "r") as f:
                     data = json.load(f)
                     self.balance = data.get("balance", self.balance)
-                    self.trade_amount = data.get("trade_amount", 100.0)
+                    self.trade_amount = data.get("trade_amount", 500.0)
                     self.last_sentiment = data.get("sentiment", self.last_sentiment)
-                    self.mf_simulation_id = data.get("mf_simulation_id", self.mf_simulation_id)
                     # Restaurar posições XAUT/BTC
                     self.xaut_positions = data.get("xaut_positions", [])
                     self.xaut_pos_counter = data.get("xaut_pos_counter", 0)
-                    self.xaut_btc_capital = data.get("xaut_btc_capital", self.xaut_btc_capital)
+                    
                     n_xaut = len(self.xaut_positions)
-                    print(f"✅ Estado anterior carregado: {len(data.get('positions', {}))} posicoes BRL | {n_xaut} posicoes XAUT.")
+                    n_brl = len(data.get('positions', {}))
+                    print(f"✅ Estado anterior carregado: {n_brl} posicoes BRL | {n_xaut} posicoes XAUT.")
                     return data.get('positions', {})
             except Exception as e:
                 print(f"Erro ao carregar estado: {e}")
@@ -236,18 +243,16 @@ class MulticoreMasterBot:
 
     def save_state(self):
         try:
-            state = {
-                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "balance": self.balance,
-                "trade_amount": self.trade_amount,
-                "sentiment": self.last_sentiment,
-                "mf_simulation_id": self.mf_simulation_id,
-                "positions": self.positions.copy(),
-                # XAUT state
-                "xaut_positions":    list(self.xaut_positions),
-                "xaut_pos_counter":  self.xaut_pos_counter,
-                "xaut_btc_capital":  self.xaut_btc_capital,
-            }
+            with self.pos_lock:
+                state = {
+                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "balance": self.balance,
+                    "trade_amount": self.trade_amount,
+                    "sentiment": self.last_sentiment,
+                    "positions": self.positions.copy(),
+                    "xaut_positions":    list(self.xaut_positions),
+                    "xaut_pos_counter":  self.xaut_pos_counter
+                }
             self.log_queue.put(("save_state", (self.status_file, state)))
         except Exception as e:
             print(f"Erro ao enfileirar estado: {e}")
@@ -257,17 +262,23 @@ class MulticoreMasterBot:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _process_xaut(self, timestamp: str) -> list:
-        """
-        Processa um ciclo completo da estratégia XAUT/BTC:
-          1. Busca ratio XAUTBTC com features
-          2. Gerencia posições abertas (TP / SL medidos em BTC)
-          3. Abre novas posições se sinal aprovado e slots disponíveis
-
-        Retorna lista de strings para exibição no dashboard.
-        """
         display_lines = []
 
-        # 1. Busca dados do ratio
+        # 1. Busca estoque de BTC disponível do ALPHA (BTCBRL)
+        with self.pos_lock:
+            # Pega a lista de BTC de todas as posições abertas de BTCBRL
+            btc_pos_list = self.positions.get('BTCBRL', [])
+            if not isinstance(btc_pos_list, list):
+                # Retrocompatibilidade: se for dict unico, converte para lista
+                btc_pos_list = [btc_pos_list] if btc_pos_list else []
+                self.positions['BTCBRL'] = btc_pos_list
+            
+            total_btc_holdings = sum(p['qty'] for p in btc_pos_list)
+            # Reservamos o BTC que já está em XAUT (não podemos gastar 2x)
+            btc_in_xaut = sum(p['cost_btc'] for p in self.xaut_positions)
+            available_btc = total_btc_holdings - btc_in_xaut
+
+        # 2. Busca dados do ratio
         df_xaut = self.engine.fetch_xaut_ratio(limit=300)
         if df_xaut.empty:
             display_lines.append("| [XAUT/BTC] Sem dados disponíveis — aguardando...            |")
@@ -293,67 +304,73 @@ class MulticoreMasterBot:
                 exit_reason = None
                 if pnl_pct >= self.xaut_tp_pct:
                     exit_reason = "TAKE PROFIT"
-                elif pnl_pct <= -self.xaut_sl_pct:
-                    exit_reason = "STOP LOSS"
+        # 3. Gerenciamento de Posições (Saídas em BTC)
+        closed_this_cycle = []
+        with self.xaut_lock:
+            remaining = []
+            for pos in self.xaut_positions:
+                pnl_pct = self.xaut_analyzer.calc_pnl_pct(pos, current_ratio)
+                
+                exit_reason = None
+                if pnl_pct >= self.xaut_tp_pct: exit_reason = "TAKE PROFIT"
+                elif pnl_pct <= -self.xaut_sl_pct: exit_reason = "STOP LOSS"
 
                 if exit_reason:
-                    # Calcula BTC recuperado (qty × ratio_atual) − taxa estimada
-                    fee_btc      = pos['cost_btc'] * 0.001 * 2  # 0.1% entrada + saída
+                    # Calcula PnL líquido (taxa estimada 0.2%)
+                    fee_btc = pos['cost_btc'] * 0.002
                     recovered_btc = (pos['xaut_qty'] * current_ratio) - fee_btc
-                    net_pnl_btc   = recovered_btc - pos['cost_btc']
-                    self.xaut_btc_capital += recovered_btc
+                    net_pnl_btc = recovered_btc - pos['cost_btc']
 
                     log_exit = (
-                        f"[{timestamp}] FECHADO XAUTBTC #{pos['id']:03d}: {exit_reason} "
-                        f"| Entry ratio: {pos['ratio_entry']:.6f} | Exit: {current_ratio:.6f} "
-                        f"| PnL: {net_pnl_btc:+.6f} BTC ({pnl_pct:+.2%}) "
-                        f"| BTC pool: {self.xaut_btc_capital:.6f}"
+                        f"[{timestamp}] FECHADO XAUT #{pos['id']:03d}: {exit_reason} "
+                        f"| PnL: {net_pnl_btc:+.6f} BTC ({pnl_pct:+.2%})"
                     )
                     self.xaut_history.insert(0, log_exit)
-                    self.async_log(self.xaut_log,    log_exit)
-                    self.async_log(self.log_file,    log_exit)
+                    self.async_log(self.xaut_log, log_exit)
+                    self.async_log(self.log_file, log_exit)
                     closed_this_cycle.append(log_exit)
-                    self.save_state()
                 else:
                     remaining.append(pos)
-
             self.xaut_positions = remaining
 
-            # ── 3. Abrir novas posições (com DCA safety) ─────────────────
-            can_open = (
-                signal == 1
-                and confidence >= self.xaut_signal_threshold
-                and len(self.xaut_positions) < self.xaut_max_positions
-                and self.xaut_btc_capital >= self.xaut_trade_size_btc
-                and self.xaut_analyzer.is_dca_allowed(
-                    self.xaut_positions, current_ratio, min_distance_pct=0.015
-                )
-            )
+        # 4. Abertura de Novas Posições (Vendas de BTC -> XAUT)
+        # (Signal, confidence e reason já foram calculados acima na linha 285)
+        
+        # Tamanho fixo de aporte de BTC (aprox R$ 333 por slot se R$ 1000 total)
+        # 0.0009 BTC é o valor real solicitado (3 posições de 0.0009 = 0.0027 BTC)
+        trade_size_btc = 0.0009
 
-            if can_open:
+        can_open = (
+            signal == 1
+            and confidence >= self.xaut_signal_threshold
+            and len(self.xaut_positions) < self.xaut_max_positions
+            and available_btc >= trade_size_btc
+            and self.xaut_analyzer.is_dca_allowed(self.xaut_positions, current_ratio, min_distance_pct=0.015)
+        )
+
+        if can_open:
+            with self.xaut_lock:
                 self.xaut_pos_counter += 1
-                qty_xaut  = self.xaut_trade_size_btc / current_ratio
+                qty_xaut = trade_size_btc / current_ratio
                 new_pos = {
                     "id":           self.xaut_pos_counter,
                     "ratio_entry":  current_ratio,
                     "xaut_qty":     qty_xaut,
-                    "cost_btc":     self.xaut_trade_size_btc,
+                    "cost_btc":     trade_size_btc,
                     "time":         timestamp,
                     "current_ratio": current_ratio,
                 }
                 self.xaut_positions.append(new_pos)
-                self.xaut_btc_capital -= self.xaut_trade_size_btc
 
                 log_entry = (
-                    f"[{timestamp}] ABERTO  XAUTBTC #{self.xaut_pos_counter:03d}: "
-                    f"ratio={current_ratio:.6f} | Qtd: {qty_xaut:.4f} XAUT "
-                    f"| Custo: {self.xaut_trade_size_btc:.4f} BTC "
-                    f"| {reason} ({confidence:.0%}) "
-                    f"| BTC pool: {self.xaut_btc_capital:.6f}"
+                    f"[{timestamp}] ABERTO  XAUT #{self.xaut_pos_counter:03d}: "
+                    f"ratio={current_ratio:.6f} | {trade_size_btc:.6f} BTC -> {qty_xaut:.4f} XAUT "
+                    f"({reason} {confidence:.0%})"
                 )
                 self.xaut_history.insert(0, log_entry)
                 self.async_log(self.xaut_log, log_entry)
                 self.async_log(self.log_file, log_entry)
+                self.save_state()
                 self.save_state()
 
         # Recortar histórico de display
@@ -366,19 +383,18 @@ class MulticoreMasterBot:
         pool_pnl   = total_val - total_cost   # PnL latente total em BTC
 
         sig_icon = "+" if signal == 1 else ("-" if signal == -1 else ".")
-        display_lines.append(f"+{'-'*72}+")
         display_lines.append(
             f"| [XAUT/BTC] Ratio: {current_ratio:.6f} BTC/XAUT "
             f"| RSI ratio: {rsi_ratio:5.1f} | BB%: {bb_pct:.2f}        |"
         )
         display_lines.append(
-            f"| Pool BTC: {self.xaut_btc_capital:.5f} BTC livre "
+            f"| Pool BTC: {available_btc:.5f} BTC livre   "
             f"| Posicoes: {n_open}/{self.xaut_max_positions} "
             f"| PnL latente: {pool_pnl:+.6f} BTC         |"
         )
         display_lines.append(
             f"|   {sig_icon} Sinal: {reason:<30} "
-            f"| Conf: {confidence:.0%} | Threshold: {self.xaut_signal_threshold:.0%} |"
+            f"| Conf: {confidence:.0%} | Thresh: {self.xaut_signal_threshold:.0%}   |"
         )
 
         for pos in self.xaut_positions:
@@ -396,38 +412,6 @@ class MulticoreMasterBot:
 
         return display_lines
 
-    def update_mirofish_sentiment(self):
-        """Periodically update sentiment from MiroFish."""
-        try:
-            # Look for existing simulation report first
-            if not self.mf_simulation_id:
-                print(f"[MIROFISH] Iniciando nova simulacao de sentimento...")
-                create_res = self.mf_client.create_simulation(self.mf_project_id)
-                if create_res.get("success"):
-                    self.mf_simulation_id = create_res.get("data", {}).get("simulation_id")
-                    print(f"[MIROFISH] Simulacao criada: {self.mf_simulation_id}")
-                    # Prepare and start
-                    self.mf_client.prepare_simulation(self.mf_simulation_id)
-                    self.mf_client.start_simulation(self.mf_simulation_id)
-                    print(f"[MIROFISH] Analise iniciada. Aguardando relatorio...")
-                else:
-                    print(f"[MIROFISH] Falha ao criar simulacao: {create_res.get('error')}")
-            
-            if self.mf_simulation_id:
-                res = self.mf_client.get_sentiment_summary(self.mf_simulation_id)
-                # If report not ready yet, trigger generation just in case
-                if res.get("sentiment") == "Neutral" and res.get("confidence") == 0:
-                     self.mf_client.generate_report(self.mf_simulation_id)
-                
-                self.last_sentiment = {
-                    "sentiment": res.get("sentiment", "Neutral"),
-                    "confidence": res.get("confidence", 0.5),
-                    "updated": datetime.now().strftime('%H:%M:%S')
-                }
-                print(f"MiroFish Sentiment Updated: {self.last_sentiment['sentiment']} ({self.last_sentiment['confidence']:.2f})")
-        except Exception as e:
-            # logger.error(f"Error updating MiroFish sentiment: {e}")
-            print(f"Error updating MiroFish sentiment: {e}")
 
     def _get_uptime_str(self):
         """Retorna a string de uptime formatada: Xd Xh Xm Xs"""
@@ -447,7 +431,6 @@ class MulticoreMasterBot:
             try:
                 timestamp = datetime.now().strftime('%H:%M:%S')
                 uptime_str = self._get_uptime_str()
-                # os.system('cls' if os.name == 'nt' else 'clear')
                 
                 # Salva estado no inicio do loop
                 self.save_state()
@@ -456,35 +439,43 @@ class MulticoreMasterBot:
                 if self.live_mode:
                     self.balance = self.get_real_balance('BRL')
                 
-                # Calculate Total Equity (Balance + current value of all open positions)
+                # 1. Calculo de Equity Total (Saldo + Valor de Mercado de todas as posições)
                 total_equity = self.balance
-                for p_asset in self.positions:
-                    p_pos = self.positions[p_asset]
-                    # Market value = trade_amount + (trade_amount * pnl_pct)
-                    p_entry_val = self.trade_amount 
-                    p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
-                    p_market_val = p_entry_val * (1 + p_pnl_pct)
-                    total_equity += p_market_val
+                with self.pos_lock:
+                    for p_asset, p_list in self.positions.items():
+                        plist = p_list if isinstance(p_list, list) else [p_list]
+                        for p_pos in plist:
+                            p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
+                            total_equity += self.trade_amount * (1 + p_pnl_pct)
 
                 print(f"+{'-'*72}+")
                 print(f"| >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Equity: R$ {total_equity:9.2f} |")
-                print(f"| Saldo Disponivel: R$ {self.balance:8.2f}  | Posicoes Abertas: {len(self.positions):2}         |")
-                print(f"| Uptime: {uptime_str:<63}|")
+                print(f"| Saldo Disponivel: R$ {self.balance:8.2f}  | Uptime: {uptime_str:<32} |")
                 print(f"+{'-'*72}+")
-                # Log de uptime no arquivo a cada iteracao
-                self.async_log(self.log_file, f"[{timestamp}] [UPTIME] {uptime_str} | Iniciado: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                self.async_log(self.log_file, f"[{timestamp}] [UPTIME] {uptime_str} | Equity: R$ {total_equity:.2f}")
+                self.total_equity = total_equity
                 
+                # Track equity history for dashboard (capped at 100 points)
+                self.equity_history.append({
+                    "time": timestamp,
+                    "equity": round(total_equity, 2)
+                })
+                if len(self.equity_history) > 100: self.equity_history.pop(0)
                 # TIER 1: PORTFOLIO
                 if self.positions:
                     print(f"| [PORTFOLIO] Ativos em Carteira:                                        |")
-                    for p_asset, p_pos in self.positions.items():
-                        p_side = "COMPRA" if p_pos['signal'] == 1 else "VENDA "
-                        p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
-                        p_val_brl = self.trade_amount * (1 + p_pnl_pct)
-                        print(f"|    {p_asset:9}: {p_pos['qty']:10.6f} {p_side} | Valor: R$ {p_val_brl:8.2f} | PnL: {p_pnl_pct:+.2%} |")
+                    with self.pos_lock:
+                        for p_asset, p_list in self.positions.items():
+                            plist = p_list if isinstance(p_list, list) else [p_list]
+                            for i, p_pos in enumerate(plist):
+                                p_side = "COMPRA" if p_pos['signal'] == 1 else "VENDA "
+                                p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
+                                p_val_brl = self.trade_amount * (1 + p_pnl_pct)
+                                dca_tag = f"#{i+1}" if len(plist) > 1 else "  "
+                                print(f"|    {p_asset:7} {dca_tag}: {p_pos['qty']:10.6f} {p_side} | Valor: R$ {p_val_brl:8.2f} | PnL: {p_pnl_pct:+.2%} |")
                     print(f"+{'-'*72}+")
-                
-                # TIER 1: COFRE
+
+                # TIER 1: COFRE (Basis Trading)
                 contracts = self.engine.fetch_delivery_contracts(asset="BTC")
                 basis_results = []
                 for c in contracts:
@@ -493,17 +484,14 @@ class MulticoreMasterBot:
                         expiry = self.basis_logic.parse_expiry(c['symbol'])
                         y = self.basis_logic.calculate_annualized_yield(data['spot'], data['future'], expiry)
                         basis_results.append({**data, 'symbol': c['symbol'], 'yield_apr': y, 'expiry_date': str(expiry)})
-                
-                best_basis = self.basis_logic.get_earliest_profitable_contract(basis_results, self.cofre_threshold)
+
                 highest = self.basis_logic.get_best_contract(basis_results)
                 curr_y = (highest['yield_apr'] * 100) if highest else 0
-                
-                status_cofre = "OPORTUNIDADE!" if best_basis else "MONITORANDO"
-                print(f"| [COFRE BRL] Status: {status_cofre:17} | Melhor Yield BTC: {curr_y:6.2f}% a.a. |")
+                print(f"| [COFRE BRL] Melhor Yield BTC Futuros: {curr_y:6.2f}% a.a.                  |")
                 print(f"+{'-'*72}+")
-                
-                # TIER 2: ALPHA
-                print(f"| [ALPHA ML ] Sinais em tempo real (BRL) baseados em Order Flow:       |")
+
+                # TIER 2: ALPHA ML
+                print(f"| [ALPHA ML ] Sinais baseados em Order Flow & ML:                       |")
                 
                 def process_asset(asset):
                     try:
@@ -511,192 +499,148 @@ class MulticoreMasterBot:
                         if df_ml.empty: return
                         df_ml = self.engine.apply_indicators(df_ml)
                         processed_ml = self.brains[asset].prepare_features(df_ml)
-                        feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
-                        last_features = processed_ml[feature_cols].values[-1]
-                        signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
-                        
+                        last_features = processed_ml[[c for c in processed_ml.columns if c.startswith('feat_')]].values[-1]
+                        signal, prob, reason = self.brains[asset].predict_signal(last_features, [c for c in processed_ml.columns if c.startswith('feat_')])
                         current_price = df_ml['close'].values[-1]
-                        
+
                         with self.pos_lock:
-                            # 1. Check Positions
-                            if asset in self.positions:
-                                self.positions[asset]['current_price'] = current_price # Update live price
-                                pos = self.positions[asset]
-                                price_ret = (current_price / pos['entry']) - 1
-                                trade_pnl = price_ret * pos['signal']
-                                
+                            # 1. Check Existing Positions (DCA Loop)
+                            active_pos = self.positions.get(asset, [])
+                            if not isinstance(active_pos, list): active_pos = [active_pos] if active_pos else []
+                            
+                            remaining = []
+                            for pos in active_pos:
+                                pos['current_price'] = current_price
+                                pnl = ((current_price / pos['entry']) - 1) * pos['signal']
                                 exit_reason = None
-                                if trade_pnl >= self.take_profit: exit_reason = "TAKE PROFIT"
-                                elif trade_pnl <= -self.stop_loss: exit_reason = "STOP LOSS"
                                 
+                                # Use dynamic TP/SL stored in position
+                                current_tp = self.take_profit * pos.get('tp_mult', 1.0)
+                                current_sl = self.stop_loss * pos.get('sl_mult', 1.0)
+                                
+                                # Trailing Stop Logic
+                                if pnl > self.trailing_activation:
+                                    if 'max_pnl' not in pos: pos['max_pnl'] = pnl
+                                    else: pos['max_pnl'] = max(pos['max_pnl'], pnl)
+                                    
+                                    # If PnL drops by 'callback' amount from peak, exit
+                                    if pnl < (pos['max_pnl'] - self.trailing_callback):
+                                        exit_reason = f"TRAILING STOP ({pos['max_pnl']:.2%})"
+                                
+                                if not exit_reason:
+                                    if pnl >= current_tp: exit_reason = "TAKE PROFIT"
+                                    elif pnl <= -current_sl: exit_reason = "STOP LOSS"
+                                    elif signal == -pos['signal'] and prob >= 0.75: exit_reason = "REVERSAL"
+
                                 if exit_reason:
-                                    actual_pnl_pct = trade_pnl
-                                    
+                                    if asset == "BTCBRL": # CHAINED EXIT
+                                        with self.xaut_lock:
+                                            if self.xaut_positions:
+                                                print(f"[CASCATA] Fechando XAUT devido a saída do BTC...")
+                                                for x_pos in self.xaut_positions:
+                                                    if self.live_mode and self.client:
+                                                        try:
+                                                            x_qty = self.format_quantity("XAUTBTC", x_pos['xaut_qty'])
+                                                            self.client.create_order(symbol="XAUTBTC", side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=x_qty)
+                                                        except Exception as e: print(f"Erro cascata: {e}")
+                                                self.xaut_positions = []
+                                                self.async_log(self.log_file, f"[{timestamp}] CASCATA: XAUT fechado por saída de BTCBRL")
+
                                     if self.live_mode and self.client:
-                                        print(f"[LIVE] 🚨 Executando SAÍDA ({exit_reason}) para {asset}...")
                                         try:
-                                            # Formata a quantidade para evitar erro de precisão
                                             exec_qty = self.format_quantity(asset, pos['qty'])
-                                            order = self.client.create_order(
-                                                symbol=asset,
-                                                side=SIDE_SELL,
-                                                type=ORDER_TYPE_MARKET,
-                                                quantity=exec_qty
-                                            )
-                                            # Calcula PnL real baseado no preço de execução se disponível
-                                            if order.get('fills'):
-                                                avg_price = sum(float(f['price']) * float(f['qty']) for f in order['fills']) / sum(float(f['qty']) for f in order['fills'])
-                                                actual_pnl_pct = ((avg_price / pos['entry']) - 1) * pos['signal']
-                                                log_live = f"[LIVE] {asset} Vendido @ {avg_price:.2f}"
-                                                print(log_live)
+                                            self.client.create_order(symbol=asset, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                         except Exception as e:
-                                            print(f"[LIVE ERROR] Falha ao fechar posição: {e}")
-                                            # Em caso de erro crítico no live, não removemos a posição para tentar novamente ou manual
-                                            return
+                                            print(f"Erro fechar {asset}: {e}")
+                                            remaining.append(pos); continue
 
-                                    total_trade_fee = self.fee_rate * 2
-                                    net_pnl_pct = actual_pnl_pct - total_trade_fee
-                                    profit_brl = self.trade_amount * net_pnl_pct
-                                    
-                                    # No Live Mode o balance é atualizado via API no topo do loop, 
-                                    # mas atualizamos aqui para o display imediato ser coerente
-                                    self.balance += (self.trade_amount + profit_brl)
+                                    net_pnl = pnl - (self.fee_rate * 2)
+                                    # Use the specific trade cost for PnL calculation
+                                    self.balance += pos['cost'] * (1 + net_pnl)
+                                    log_out = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL: {net_pnl:+.2%} | BRL: {self.balance:.2f}"
+                                    self.history_log.insert(0, log_out)
+                                    self.async_log(self.log_file, log_out)
                                     self.save_balance()
+                                else:
+                                    remaining.append(pos)
+                            self.positions[asset] = remaining
+
+                            # 2. Entries & DCA (Max 2 for BTC, 1 for others)
+                            max_dca = 2 if asset == "BTCBRL" else 1
+                            if signal == 1 and len(self.positions[asset]) < max_dca:
+                                # AGENTIC GATE & ALPHA MODIFIERS
+                                decision, agent_reason, modifiers = self.agent.assess_trade(asset, signal, prob, reason)
+                                
+                                if decision == "APPROVE":
+                                    # DYNAMIC SIZING: Trade % of balance * size multiplier
+                                    current_trade_size = (self.balance * self.risk_per_trade_pct) * modifiers['size_mult']
                                     
-                                    log_exit = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL Liquid: {net_pnl_pct:+.2%} | Saldo: R$ {self.balance:.2f}"
-                                    self.history_log.insert(0, log_exit)
-                                    self.async_log(self.paper_log, log_exit)
-                                    self.async_log(self.log_file, log_exit)
-                                    del self.positions[asset]
-                                    self.save_state() # Update state immediately after exit
-                            
-                            # 2. Open Positions
-                            elif signal != 0:
-                                # Bloqueio de Segurança: Evita Short em Mercado Spot (BRL/USDT)
-                                if signal == -1 and ('BRL' in asset or 'USDT' in asset):
-                                    reason = "Short Blocked (Spot)"
-                                    signal = 0
+                                    if self.balance >= current_trade_size:
+                                        qty = current_trade_size / current_price
+                                        entry_p = current_price
+                                        if self.live_mode and self.client:
+                                            try:
+                                                exec_qty = self.format_quantity(asset, qty)
+                                                self.client.create_order(symbol=asset, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                            except Exception as e: print(f"Erro abrir {asset}: {e}"); return
 
-                                if signal != 0:
-                                    # Apply Sentiment Bias
-                                    bias = 0.0
-                                    if self.last_sentiment["sentiment"] == "Bullish" and signal == 1:
-                                        bias = 0.05
-                                    elif self.last_sentiment["sentiment"] == "Bearish" and signal == -1:
-                                        bias = 0.05
-                                    
-                                    effective_prob = prob + bias
+                                        self.positions[asset].append({
+                                            "entry": entry_p, 
+                                            "signal": 1, 
+                                            "qty": qty, 
+                                            "cost": current_trade_size,
+                                            "time": timestamp, 
+                                            "current_price": entry_p,
+                                            "tp_mult": modifiers['tp_mult'],
+                                            "sl_mult": modifiers['sl_mult']
+                                        })
+                                        self.balance -= current_trade_size
+                                        log_in = f"[{timestamp}] ABERTO {asset} ({modifiers['size_mult']}x): @ {entry_p:.2f} | BRL: {self.balance:.2f}"
+                                        self.history_log.insert(0, log_in)
+                                        self.async_log(self.log_file, log_in)
+                                        print(f"| [AGENT] {asset}: {agent_reason[:50]}... |")
+                                        self.save_balance(); self.save_state()
+                                else:
+                                    # Output the reasoning why it was REJECTED/WAIT
+                                    if iter_count % 5 == 0:
+                                        print(f"| [AGENT] {asset}: {decision} | {agent_reason[:48]}... |")
 
-                                    if effective_prob >= self.trade_threshold:
-                                        if self.balance >= self.trade_amount and self.trade_amount >= self.min_binance_amount:
-                                            qty = self.trade_amount / current_price
-                                            entry_price = current_price
-                                            
-                                            if self.live_mode and self.client:
-                                                print(f"[LIVE] 🚀 Abrindo COMPRA para {asset}...")
-                                                try:
-                                                    # No mercado Spot, calculamos a qty baseada no valor BRL fixo
-                                                    # Algumas moedas exigem precisão específica
-                                                    exec_qty = self.format_quantity(asset, qty)
-                                                    order = self.client.create_order(
-                                                        symbol=asset,
-                                                        side=SIDE_BUY,
-                                                        type=ORDER_TYPE_MARKET,
-                                                        quantity=exec_qty
-                                                    )
-                                                    if order.get('fills'):
-                                                        entry_price = sum(float(f['price']) * float(f['qty']) for f in order['fills']) / sum(float(f['qty']) for f in order['fills'])
-                                                        qty = sum(float(f['qty']) for f in order['fills']) # Qtd real executada
-                                                except Exception as e:
-                                                    print(f"[LIVE ERROR] Falha ao abrir posição: {e}")
-                                                    return
+                            # 3. Status Dashboard
+                            n = len(self.positions[asset])
+                            if n > 0:
+                                cur_pnl = sum(((current_price / p['entry']) - 1) for p in self.positions[asset]) / n
+                                sig_txt = f"ABERTO {n}x ({cur_pnl:+.2%})"
+                                sig_ico = "B"
+                            else:
+                                sig_txt = f"COMPRA ({prob:.0%})" if signal == 1 else f"NEUTRO ({prob:.0%})"
+                                sig_ico = "+" if signal == 1 else "."
+                            print(f"|    {sig_ico} {asset:9}: {sig_txt:18} - {reason:18} |")
+                    except Exception as e: print(f"Erro {asset}: {e}")
 
-                                            side = "COMPRA" if signal == 1 else "VENDA"
-                                            self.positions[asset] = {
-                                                "entry": entry_price,
-                                                "signal": signal,
-                                                "qty": qty,
-                                                "prob": prob,
-                                                "effective_prob": effective_prob,
-                                                "time": datetime.now().strftime('%H:%M:%S'),
-                                                "current_price": entry_price
-                                            }
-                                            
-                                            # No Live Mode, o saldo diminuirá na Binance automaticamente
-                                            self.balance -= self.trade_amount 
-                                            log_entry = f"[{timestamp}] ABERTO {asset}: {side} @ {entry_price:.2f} (Qtd: {qty:.6f}) | Saldo: R$ {self.balance:.2f}"
-                                            self.history_log.insert(0, log_entry)
-                                            self.async_log(self.paper_log, log_entry)
-                                            self.async_log(self.log_file, log_entry)
-                                            self.save_balance()
-                                            self.save_state() # Update state immediately after entry
-
-                            # Status Row
-                            sig_text = "NADA"
-                            sig_icon = " "
-                            if asset in self.positions:
-                                pos = self.positions[asset]
-                                pnl_pct = ((current_price / pos['entry']) - 1) * pos['signal']
-                                sig_text = f"ABERTO ({pnl_pct:+.2%})"
-                                sig_icon = "B" if pos['signal'] == 1 else "S"
-                            elif signal == 1: sig_text = f"COMPRA ({prob:.0%})"; sig_icon = "+"
-                            elif signal == -1: sig_text = f"VENDA  ({prob:.0%})"; sig_icon = "-"
-                            else: sig_text = f"NEUTRO ({prob:.0%})"; sig_icon = "."
-                            
-                            oos_acc = self.stats[asset]["oos_score"]
-                            print(f"|    {sig_icon} {asset:9}: {sig_text:18} - {reason:18} |")
-                            print(f"|      (Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%)                   |")
-                            
-                            log_ml = f"[{timestamp}] {asset:9}: {sig_text:18} - {reason:18} | Confianca: {oos_acc:2.0%} | SL: 1.5% | TP: 3.0%"
-                            self.async_log(self.log_file, log_ml)
-
-                    except Exception as e:
-                        print(f"Erro processando {asset}: {e}")
-
-                # Execute asset processing concurrently using persistent executor
                 list(self.executor.map(process_asset, self.assets))
 
-                # ── TIER 3: Estratégia XAUT/BTC ──────────────────────────
+                # XAUT/BTC (Integrado no ALPHA)
                 try:
-                    xaut_lines = self._process_xaut(timestamp)
-                    for line in xaut_lines:
-                        clean = line.encode('ascii', 'ignore').decode('ascii')
-                        print(clean)
-                except Exception as e:
-                    print(f"[XAUT] Erro no ciclo XAUT: {e}")
+                    lines = self._process_xaut(timestamp)
+                    for l in lines: print(l.encode('ascii', 'ignore').decode('ascii'))
+                except Exception as e: print(f"[XAUT] Erro: {e}")
+
+                print(f"+{'-'*72}+")
 
                 self.history_log = self.history_log[:5]
-                print(f"+{'-'*72}+")
                 print(f"| # LOG RECENTE:                                                        |")
-                for entry in self.history_log:
-                    clean_entry = entry.encode('ascii', 'ignore').decode('ascii')
-                    print(f"| > {clean_entry:68} |")
+                for entry in self.history_log: print(f"| > {entry.encode('ascii', 'ignore').decode('ascii'):68} |")
                 print(f"+{'-'*72}+")
                 
-            except Exception as e:
-                print(f"Error in loop: {e}")
-            
+            except Exception as e: print(f"Error Loop: {e}")
             iter_count += 1
-            # Update MiroFish sentiment every ~100 iterations (approx every 15-20 mins)
-            if iter_count % 100 == 0:
-                self.update_mirofish_sentiment()
-                
-            # Retrain ML Models every ~2880 iterations (24 hours at 30s per iter)
             if iter_count % 2880 == 0:
-                print(f"\n[SISTEMA] Iniciando Retreinamento Diário dos Modelos de ML...")
-                for rt_asset in self.assets:
-                    try:
-                        df_rt = self.engine.fetch_binance_klines(rt_asset, limit=1500)
-                        if not df_rt.empty:
-                            df_rt = self.engine.apply_indicators(df_rt)
-                            oos_sc = self.brains[rt_asset].train(df_rt, train_full=False, tp=self.take_profit, sl=self.stop_loss)
-                            self.stats[rt_asset]["samples"] = len(df_rt)
-                            self.stats[rt_asset]["oos_score"] = oos_sc
-                            print(f"[RE-TRAINED] {rt_asset} OOS Score: {oos_sc:.2%}")
-                    except Exception as e:
-                        print(f"Erro ao retreinar {rt_asset}: {e}")
-                print("\n")
-                
+                for rt in self.assets:
+                    dfrt = self.engine.fetch_binance_klines(rt, limit=1500)
+                    if not dfrt.empty:
+                        dfrt = self.engine.apply_indicators(dfrt)
+                        sc = self.brains[rt].train(dfrt, train_full=False, tp=self.take_profit, sl=self.stop_loss)
+                        self.stats[rt]["oos_score"] = sc
             time.sleep(30)
 
 if __name__ == "__main__":
