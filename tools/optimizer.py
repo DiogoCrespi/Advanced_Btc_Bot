@@ -48,8 +48,24 @@ class StrategyOptimizer:
         entry_price = 0
         pnl_history = [1.0]
 
+        # ⚡ BOLT OPTIMIZATION:
+        # Extract Pandas Series to NumPy arrays before the loop.
+        # This completely eliminates `.iloc` overhead inside the loop,
+        # yielding significant performance improvements.
+        close_vals = df['close'].to_numpy()
+
+        has_avwap = use_avwap and 'AVWAP' in df.columns
+        avwap_vals = df['AVWAP'].to_numpy() if has_avwap else None
+
+        sweep_low_vals = df['sweep_low'].to_numpy() if use_sweeps else None
+        sweep_high_vals = df['sweep_high'].to_numpy() if use_sweeps else None
+        cvd_div_vals = df['cvd_div'].to_numpy() if use_cvd_div else None
+
+        # Pre-extract ML features as a 2D numpy array if in ML mode
+        feat_matrix = df[feature_cols].to_numpy() if use_ml else None
+
         for i in range(start_idx, len(df)):
-            current_price = df['close'].iloc[i]
+            current_price = close_vals[i]
             
             # EXIT LOGIC
             if position != 0:
@@ -64,7 +80,7 @@ class StrategyOptimizer:
             if position == 0:
                 if use_ml:
                     # ML Mode uses predicted class
-                    feat_vec = df[feature_cols].iloc[i].values
+                    feat_vec = feat_matrix[i]
                     signal, prob, reason = self.ml_brain.predict_signal(feat_vec, feature_cols)
                     if signal == 1:
                         position = 1
@@ -77,19 +93,19 @@ class StrategyOptimizer:
                     score = 0
                     
                     # Signal 1: Price vs AVWAP
-                    if use_avwap and 'AVWAP' in df.columns and not pd.isna(df['AVWAP'].iloc[i]):
-                        if current_price > df['AVWAP'].iloc[i]: score += 1
+                    if has_avwap and not pd.isna(avwap_vals[i]):
+                        if current_price > avwap_vals[i]: score += 1
                         else: score -= 1
                     
                     # Signal 2: Sweeps
                     if use_sweeps:
-                        if df['sweep_low'].iloc[i] == 1: score += 2 
-                        if df['sweep_high'].iloc[i] == 1: score -= 2 
+                        if sweep_low_vals[i] == 1: score += 2
+                        if sweep_high_vals[i] == 1: score -= 2
                     
                     # Signal 3: CVD Divergence
                     if use_cvd_div:
-                        if df['cvd_div'].iloc[i] == 1: score += 2
-                        if df['cvd_div'].iloc[i] == -1: score -= 2
+                        if cvd_div_vals[i] == 1: score += 2
+                        if cvd_div_vals[i] == -1: score -= 2
 
                     # Threshold to enter
                     if score >= 3:
