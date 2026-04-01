@@ -150,9 +150,9 @@ class MulticoreMasterBot:
             self.client = Client(self.api_key, self.api_secret)
             account_info = self.client.get_account()
             if not account_info.get('canTrade'):
-                print("[ERRO FATAL] As chaves API não têm permissão de Trading habilitada!")
+                print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada!")
                 sys.exit(1)
-            print("✅ Conectado na Binance! Permissão de leitura/trading ativa.")
+            print("✅ Conectado na Binance! Permissao de leitura/trading ativa.")
         except BinanceAPIException as e:
             print(f"[ERRO FATAL] Credenciais rejeitadas pela Binance: {e}")
             sys.exit(1)
@@ -371,7 +371,6 @@ class MulticoreMasterBot:
                 self.async_log(self.xaut_log, log_entry)
                 self.async_log(self.log_file, log_entry)
                 self.save_state()
-                self.save_state()
 
         # Recortar histórico de display
         self.xaut_history = self.xaut_history[:5]
@@ -443,10 +442,10 @@ class MulticoreMasterBot:
                 total_equity = self.balance
                 with self.pos_lock:
                     for p_asset, p_list in self.positions.items():
-                        plist = p_list if isinstance(p_list, list) else [p_list]
+                        plist = p_list if isinstance(p_list, list) else ([p_list] if p_list else [])
                         for p_pos in plist:
                             p_pnl_pct = ((p_pos.get('current_price', p_pos['entry']) / p_pos['entry']) - 1) * p_pos['signal']
-                            total_equity += self.trade_amount * (1 + p_pnl_pct)
+                            total_equity += p_pos.get('cost', self.trade_amount) * (1 + p_pnl_pct)
 
                 print(f"+{'-'*72}+")
                 print(f"| >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Equity: R$ {total_equity:9.2f} |")
@@ -504,9 +503,11 @@ class MulticoreMasterBot:
                         current_price = df_ml['close'].values[-1]
 
                         with self.pos_lock:
-                            # 1. Check Existing Positions (DCA Loop)
+                            # 1. Normalização e Verificação de Posições (DCA Loop)
                             active_pos = self.positions.get(asset, [])
-                            if not isinstance(active_pos, list): active_pos = [active_pos] if active_pos else []
+                            if not isinstance(active_pos, list):
+                                active_pos = [active_pos] if active_pos else []
+                                self.positions[asset] = active_pos
                             
                             remaining = []
                             for pos in active_pos:
@@ -601,9 +602,10 @@ class MulticoreMasterBot:
                                         print(f"| [AGENT] {asset}: {agent_reason[:50]}... |")
                                         self.save_balance(); self.save_state()
                                 else:
-                                    # Output the reasoning why it was REJECTED/WAIT
-                                    if iter_count % 5 == 0:
-                                        print(f"| [AGENT] {asset}: {decision} | {agent_reason[:48]}... |")
+                                    # Output the reasoning why it was REJECTED/WAIT (Logged every few iterations to avoid spam)
+                                    if iter_count % 10 == 0:
+                                        print(f"| [FILTRO] {asset}: {decision} | {agent_reason[:48]}... |")
+                                        self.async_log(self.log_file, f"[{timestamp}] [AGENT] {asset} {decision}: {agent_reason}")
 
                             # 3. Status Dashboard
                             n = len(self.positions[asset])

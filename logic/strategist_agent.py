@@ -61,13 +61,16 @@ class StrategistAgent:
         if regime == "Risk-On / Weak Dollar":
             if ml_signal == 1:
                 tp_mult += 0.3 # Extend TP in Risk-On
-                logic_steps.append("Regime: Risk-On (Extending TP +0.3)")
+                sl_mult += 0.2 # Allow more 'breathing room' for the trend
+                logic_steps.append("Regime: Risk-On (Extending TP +0.3 & SL +0.2)")
             else:
                 size_mult -= 0.2 # Be careful shorting in Risk-On
+                sl_mult -= 0.1 # Tighter stops for counter-trend
         elif regime == "Risk-Off / Strong Dollar":
             if ml_signal == 1:
                 decision = "REJECT" if macro_risk > 0.75 else "WAIT"
-                logic_steps.append(f"Risk-Off Pressure: {decision}")
+                sl_mult -= 0.2 # Tighten stops significantly in Risk-Off
+                logic_steps.append(f"Risk-Off Pressure: {decision} (Tightening SL -0.2)")
             else:
                 tp_mult += 0.2 # Shorts thrive here
                 
@@ -79,6 +82,7 @@ class StrategistAgent:
         # Clamp Multipliers
         size_mult = float(np.clip(size_mult, 0.2, 2.0))
         tp_mult   = float(np.clip(tp_mult, 0.5, 2.5))
+        sl_mult   = float(np.clip(sl_mult, 0.5, 1.5))
         
         reasoning_str = " | ".join(logic_steps)
         modifiers = {

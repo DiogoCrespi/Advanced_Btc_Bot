@@ -128,7 +128,7 @@ class IntelligenceManager:
             "news_signal":     news.get('signal', 'neutral'),
             "news_score":      news.get('score', 0.0),
             "news_articles":   news.get('article_count', 0),
-            "news_provider":   self.news.active_provider,
+            "news_provider":   self.news_fetcher.active_provider,
         }
 
 if __name__ == "__main__":

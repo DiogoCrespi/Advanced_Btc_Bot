@@ -141,6 +141,10 @@ class MLBrain:
         
         y = self.create_labels(data, tp=tp, sl=sl, horizon=horizon)
         
+        # Ajuste dinâmico de complexidade (min_samples_leaf) para evitar overfitting em historicos curtos
+        dynamic_leaf = max(5, int(len(y) * 0.01))
+        self.model.set_params(min_samples_leaf=dynamic_leaf)
+        
         # Remove unknown future samples from the features to prevent Data Leakage
         X = X[:len(y)]
         
@@ -213,7 +217,7 @@ class MLBrain:
         # Filtro de Limiar de Confiança (Relativo devido à recalibração artificial do class_weight='balanced')
         if max_prob < min_confidence:
             pred_class = 0
-            reason = f"Convicção Baixa Ponderada ({max_prob:.1%})"
+            reason = f"Conviccao Baixa Ponderada ({max_prob:.1%})"
             return pred_class, max_prob, reason
         
         # Heurística para explicar o motivo
@@ -224,14 +228,16 @@ class MLBrain:
         if pred_class == 1: # COMPRA
             if feats.get('feat_cvd_div', 0) == 1: reason = "Divergencia CVD (Compra)"
             elif feats.get('feat_sweep_low', 0) == 1: reason = "Sweep de Fundo (Compra)"
-            elif feats.get('feat_rsi', 0.5) < 0.3: reason = "Sobrevendido (RSI)"
-            elif feats.get('feat_slope_sma50', 0) > 0.0001: reason = "Tendencia Alta"
+            elif feats.get('feat_rsi', 0.5) < 0.35: reason = "Oversold RSI"
+            elif feats.get('feat_dist_sma50', 0) < -0.03: reason = "Mean Reversion (Under)"
+            elif feats.get('feat_slope_sma50', 0) > 0.0001: reason = "SMA50 Up-Trend"
             else: reason = "Confluencia (Compra)"
         elif pred_class == -1: # VENDA (Agora protegido pelo Triple Barrier)
             if feats.get('feat_cvd_div', 0) == -1: reason = "Divergencia CVD (Venda)"
             elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo (Venda)"
-            elif feats.get('feat_slope_sma50', 0) < -0.0001: reason = "Tendencia Baixa"
-            elif feats.get('feat_dist_sma50', 0) > 0.05: reason = "Sobrecomprado (Media)"
+            elif feats.get('feat_rsi', 0.5) > 0.65: reason = "Overbought RSI"
+            elif feats.get('feat_slope_sma50', 0) < -0.0001: reason = "SMA50 Down-Trend"
+            elif feats.get('feat_dist_sma50', 0) > 0.04: reason = "Mean Reversion (Over)"
             else: reason = "Confluencia (Venda)"
             
         return pred_class, max_prob, reason
