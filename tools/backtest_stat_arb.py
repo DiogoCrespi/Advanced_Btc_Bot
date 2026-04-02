@@ -48,14 +48,23 @@ class StatArbBacktester:
         
         print(f"Starting simulation over {len(common_index)} candles...")
         
+        # ⚡ BOLT OPTIMIZATION: Convert Pandas Series to NumPy arrays before looping
+        # This eliminates the massive overhead of Pandas `.iloc` in tight loops
+        z_arr = z_score.to_numpy()
+        beta_arr = betas.to_numpy()
+        spread_arr = spread.to_numpy()
+        spread_mean_arr = spread_mean.to_numpy()
+        btc_close_arr = df_btc['Close'].to_numpy()
+        eth_close_arr = df_eth['Close'].to_numpy()
+
         for i in range(100, len(common_index)):
-            z = z_score.iloc[i]
-            beta = betas.iloc[i]
-            s_curr = spread.iloc[i]
-            s_mean = spread_mean.iloc[i]
+            z = float(z_arr[i])
+            beta = float(beta_arr[i])
+            s_curr = float(spread_arr[i])
+            s_mean = float(spread_mean_arr[i])
             
-            p_btc = df_btc['Close'].iloc[i]
-            p_eth = df_eth['Close'].iloc[i]
+            p_btc = float(btc_close_arr[i])
+            p_eth = float(eth_close_arr[i])
             time = common_index[i]
             
             signal = self.logic.get_signal(z)
