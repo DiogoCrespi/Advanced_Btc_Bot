@@ -44,30 +44,32 @@ class DataEngine:
         Returns a dictionary with the % change of each.
         """
         print("Fetching Macro Data (S&P 500 & DXY)...")
+        sp500_change = 0.0
+        dxy_change = 0.0
+        
         try:
-            sp500 = yf.download("^GSPC", period=period, interval="1d", progress=False)
-            dxy = yf.download("DX-Y.NYB", period=period, interval="1d", progress=False)
+            # Download with short timeout and no progress bar
+            sp500 = yf.download("^GSPC", period=period, interval="1d", progress=False, timeout=5)
+            dxy = yf.download("DX-Y.NYB", period=period, interval="1d", progress=False, timeout=5)
             
-            # Clean MultiIndex if needed
-            if isinstance(sp500.columns, pd.MultiIndex): sp500.columns = sp500.columns.droplevel(1)
-            if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
-
-            # Calculate % Change (Today vs Yesterday)
-            sp500_change = 0.0
-            if len(sp500) >= 2:
+            # 1. Process S&P 500
+            if not sp500.empty and len(sp500) >= 2:
+                if isinstance(sp500.columns, pd.MultiIndex): sp500.columns = sp500.columns.droplevel(1)
                 sp500_change = (sp500['Close'].iloc[-1] / sp500['Close'].iloc[-2]) - 1
-
-            dxy_change = 0.0
-            if len(dxy) >= 2:
+            
+            # 2. Process DXY
+            if not dxy.empty and len(dxy) >= 2:
+                if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
                 dxy_change = (dxy['Close'].iloc[-1] / dxy['Close'].iloc[-2]) - 1
 
-            return {
-                "sp500_change": float(sp500_change),
-                "dxy_change": float(dxy_change)
-            }
         except Exception as e:
-            print(f"Error fetching macro data: {e}")
-            return {"sp500_change": 0.0, "dxy_change": 0.0}
+            # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot
+            print(f"[DATA] Aviso Macro Data: Falha limitada no download (^GSPC/DXY): {e}")
+
+        return {
+            "sp500_change": float(sp500_change),
+            "dxy_change": float(dxy_change)
+        }
 
     def fetch_data(self):
         """

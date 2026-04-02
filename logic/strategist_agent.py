@@ -129,6 +129,20 @@ class StrategistAgent:
         }
         return self.workflow.invoke(initial_state)
 
+    @property
+    def intel(self):
+        """Compatibility layer for legacy calls to self.agent.intel"""
+        return self
+
+    def get_summary(self):
+        """Returns the current macro risk summary from the radar"""
+        mult, msg = self.radar.get_recommended_position_mult()
+        return {
+            "risk_score": self.radar.risk_score,
+            "recommendation": msg,
+            "multiplier": mult
+        }
+
 if __name__ == "__main__":
     agent = StrategistAgent()
     res = agent.run(

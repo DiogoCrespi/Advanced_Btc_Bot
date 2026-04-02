@@ -19,6 +19,7 @@ class MarketMemory:
         try:
             self.driver = GraphDatabase.driver(uri, auth=(user, password))
             self._verify_connection()
+            self._initialize_schema()
         except Exception as e:
             print(f"[MEMORY] Falha ao conectar ao Neo4j: {e}")
             self.driver = None
@@ -26,6 +27,30 @@ class MarketMemory:
     def _verify_connection(self):
         with self.driver.session() as session:
             session.run("RETURN 1")
+
+    def _initialize_schema(self):
+        """
+        Garante que os Labels e Relationships existam no banco para evitar warnings.
+        Cria e remove um conjunto mínimo de dados.
+        """
+        if not self.driver: return
+        query = """
+        MERGE (e:Event {id: 'schema_seed'})
+        MERGE (m:MacroState {id: 'schema_seed'})
+        MERGE (d:Decision {id: 'schema_seed'})
+        MERGE (o:Outcome {id: 'schema_seed'})
+        MERGE (e)-[:HAPPENED_IN]->(m)
+        MERGE (d)-[:BASED_ON]->(e)
+        MERGE (o)-[:FOLLOWED]->(d)
+        WITH e, m, d, o
+        DETACH DELETE e, m, d, o
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query)
+                print("[MEMORY] Schema inicializado (Neo4j).")
+        except Exception as e:
+            print(f"[MEMORY] Aviso ao inicializar schema: {e}")
 
     def close(self):
         if self.driver:
