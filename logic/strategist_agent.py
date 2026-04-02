@@ -143,6 +143,24 @@ class StrategistAgent:
             "multiplier": mult
         }
 
+    def assess_usdt_opportunity(self, signal: int, confidence: float, reason: str):
+        """
+        Decision gate for USDT/BRL safe harbor strategy.
+        """
+        # Logic: If macro risk is high (Risk Off) and we have a bullish USDT signal, approve
+        if signal == 1 and self.radar.risk_score < 0.40:
+             return "APPROVE", f"Safe Harbor: {reason}"
+        
+        # If it's a mean reversion play (USDT oversold)
+        if signal == 1 and confidence > 0.75:
+            return "APPROVE", f"Mean Reversion: {reason}"
+
+        # If it's a sell signal (Risk On returning)
+        if signal == -1:
+            return "APPROVE", f"Exiting Safe Harbor: {reason}"
+
+        return "REJECT", "Context not optimal for USDT", {}
+
 if __name__ == "__main__":
     agent = StrategistAgent()
     res = agent.run(
