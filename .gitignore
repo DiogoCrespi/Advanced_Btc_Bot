@@ -11,6 +11,7 @@ venv.bak/
 .idea/
 .vscode/
 *.log
-data/
+data/*
+!data/*.py
 outputs/
 .ipynb_checkpoints
