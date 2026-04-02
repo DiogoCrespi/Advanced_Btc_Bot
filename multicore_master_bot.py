@@ -541,7 +541,7 @@ class MulticoreMasterBot:
 
                 print(f"""+--------------------------------------------------------------------------------+
 | >>> ADVANCED MULTICORE BTC BOT | {timestamp} | Equity: R$ {total_equity:9.2f} |
-| Saldo Disponivel: R$ {self.balance:8.2f}  | Uptime: {uptime_str:<32} |
+| Saldo Disponivel: R$ {self.balance:8.2f}  | USDT: {self.usdt_balance:10.2f}              |
 | Macro Risk Score: {self.macro_risk:6.2f}    | Recommendation: {macro_msg:<31} |
 +--------------------------------------------------------------------------------+""")
                 self.async_log(self.log_file, f"[{timestamp}] [UPTIME] {uptime_str} | Equity: R$ {total_equity:.2f}")
@@ -554,7 +554,7 @@ class MulticoreMasterBot:
                 })
                 if len(self.equity_history) > 100: self.equity_history.pop(0)
                 # TIER 1: PORTFOLIO
-                if self.positions:
+                if self.positions or self.usdt_balance > 0.01:
                     print(f"| [PORTFOLIO] Ativos em Carteira:                                        |")
                     with self.pos_lock:
                         for p_asset, p_list in self.positions.items():
@@ -565,7 +565,15 @@ class MulticoreMasterBot:
                                 p_val_brl = self.trade_amount * (1 + p_pnl_pct)
                                 dca_tag = f"#{i+1}" if len(plist) > 1 else "  "
                                 print(f"|    {p_asset:7} {dca_tag}: {p_pos['qty']:10.6f} {p_side} | Valor: R$ {p_val_brl:8.2f} | PnL: {p_pnl_pct:+.2%} |")
-                    print(f"+{'-'*72}+")
+                        
+                        # Mostrar USDT separadamente se houver saldo
+                        if self.usdt_balance > 0.01:
+                            try:
+                                u_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.20
+                            except: u_price = 5.20
+                            u_val = self.usdt_balance * u_price
+                            print(f"|    USDTBRL   : {self.usdt_balance:10.6f} COMPRA | Valor: R$ {u_val:8.2f} | PnL:  0.00% |")
+                    print(f"+--------------------------------------------------------------------------------+")
 
                 # TIER 1: COFRE (Basis Trading)
                 contracts = self.engine.fetch_delivery_contracts(asset="BTC")
