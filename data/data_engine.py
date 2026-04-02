@@ -53,8 +53,13 @@ class DataEngine:
             if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
 
             # Calculate % Change (Today vs Yesterday)
-            sp500_change = (sp500['Close'].iloc[-1] / sp500['Close'].iloc[-2]) - 1
-            dxy_change = (dxy['Close'].iloc[-1] / dxy['Close'].iloc[-2]) - 1
+            sp500_change = 0.0
+            if len(sp500) >= 2:
+                sp500_change = (sp500['Close'].iloc[-1] / sp500['Close'].iloc[-2]) - 1
+
+            dxy_change = 0.0
+            if len(dxy) >= 2:
+                dxy_change = (dxy['Close'].iloc[-1] / dxy['Close'].iloc[-2]) - 1
 
             return {
                 "sp500_change": float(sp500_change),
