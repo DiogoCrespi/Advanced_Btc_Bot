@@ -6,4 +6,7 @@ tavily-python>=0.3.0
 python-dotenv==1.0.1
 scikit-learn>=1.4.0
 python-binance==1.0.19
-python-binance>=1.0.19
+neo4j>=5.18.0
+langgraph>=0.0.30
+langchain-openai>=0.1.0
+pytest>=8.0.0

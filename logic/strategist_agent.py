@@ -1,118 +1,138 @@
-from logic.intelligence_manager import IntelligenceManager
-from logic.mirofish_client import MiroFishClient
-from datetime import datetime
-import numpy as np
+import json
+import os
+from typing import Dict, List, TypedDict
+from langgraph.graph import StateGraph, END
+from logic.macro_radar import MacroRadar
+from logic.market_memory import MarketMemory
+
+class StrategistState(TypedDict):
+    signals: Dict[str, float] # { 'tier1': 0.05, 'tier2': 1, 'tier3': -1 }
+    macro_data: Dict[str, float] 
+    risk_score: float
+    historical_conviction: float
+    decision: str
+    allocation_mult: float
+    reasoning: List[str]
 
 class StrategistAgent:
+    """
+    Orquestrador Agêntico (LangGraph) que decide a estratégia global do bot.
+    Inspirado na arquitetura flexível do @redamon.
+    """
+
     def __init__(self):
-        self.intel = IntelligenceManager()
-        self.sentiment = MiroFishClient()
-        self.reasoning_log = []
-        
-    def assess_trade(self, asset, ml_signal, ml_prob, ml_reason):
-        """
-        Calculates trade approval and modifiers (sizing, TP/SL).
-        Returns: (decision, reasoning, modifiers)
-        modifiers: { "size_mult": float, "tp_mult": float, "sl_mult": float }
-        """
-        if ml_signal == 0:
-            return "REJECT", "ML signal is Neutral.", {"size_mult": 0, "tp_mult": 1, "sl_mult": 1}
-            
-        # 1. Fetch Context
-        macro_summary = self.intel.get_summary()
-        macro_risk    = macro_summary['risk_score']
-        regime        = macro_summary['regime']
-        news_score    = macro_summary.get('news_score', 0.0)
-        
-        # 2. Reasoning Loop
-        logic_steps = []
-        decision    = "APPROVE"
-        
-        # Base Modifiers
-        size_mult = 1.0
-        tp_mult   = 1.0
-        sl_mult   = 1.0
-        
-        # A. ML Confidence & News Confluence
-        logic_steps.append(f"ML Prob: {ml_prob:.1%}")
-        if ml_prob > 0.85:
-            size_mult += 0.3
-            logic_steps.append("Ultra High ML confidence (+0.3 size)")
-            
-        # NEWS ALPHA INTEGRATION
-        if (ml_signal == 1 and news_score > 0.4):
-            size_mult += 0.5
-            tp_mult   += 0.3
-            logic_steps.append(f"📰 Turbo Buy Confluence: Strong Bullish News ({news_score:+.2f})")
-        elif (ml_signal == -1 and news_score < -0.4):
-            size_mult += 0.5
-            tp_mult   += 0.3
-            logic_steps.append(f"📰 Turbo Sell Confluence: Strong Bearish News ({news_score:+.2f})")
-        
-        # NEWS KILL SWITCH
-        if (ml_signal == 1 and news_score < -0.6):
-            decision = "REJECT"
-            logic_steps.append(f"🛑 NEWS KILL SWITCH: ML wants Long but News is EXTREME BEARISH ({news_score:+.2f})")
-        elif (ml_signal == -1 and news_score > 0.6):
-            decision = "REJECT"
-            logic_steps.append(f"🛑 NEWS KILL SWITCH: ML wants Short but News is EXTREME BULLISH ({news_score:+.2f})")
+        self.radar = MacroRadar()
+        self.memory = MarketMemory() # Knowledge retrieval layer
+        self.workflow = self._build_workflow()
 
-        # B. Macro Risk & Regime Adjustments
-        if regime == "Risk-On / Weak Dollar":
-            if ml_signal == 1:
-                tp_mult += 0.3 # Extend TP in Risk-On
-                sl_mult += 0.2 # Allow more 'breathing room' for the trend
-                logic_steps.append("Regime: Risk-On (Extending TP +0.3 & SL +0.2)")
-            else:
-                size_mult -= 0.2 # Be careful shorting in Risk-On
-                sl_mult -= 0.1 # Tighter stops for counter-trend
-        elif regime == "Risk-Off / Strong Dollar":
-            if ml_signal == 1:
-                decision = "REJECT" if macro_risk > 0.75 else "WAIT"
-                sl_mult -= 0.2 # Tighten stops significantly in Risk-Off
-                logic_steps.append(f"Risk-Off Pressure: {decision} (Tightening SL -0.2)")
-            else:
-                tp_mult += 0.2 # Shorts thrive here
-                
-        # C. Critical Aborts
-        if ml_signal == 1 and macro_risk > 0.85:
-            decision = "REJECT"
-            logic_steps.append("ABORT: Extreme Macro Risk")
-            
-        # Clamp Multipliers
-        size_mult = float(np.clip(size_mult, 0.2, 2.0))
-        tp_mult   = float(np.clip(tp_mult, 0.5, 2.5))
-        sl_mult   = float(np.clip(sl_mult, 0.5, 1.5))
+    def _build_workflow(self):
+        builder = StateGraph(StrategistState)
         
-        reasoning_str = " | ".join(logic_steps)
+        # 1. Analyse Macro
+        builder.add_node("analyze_macro", self._node_analyze_macro)
+        # 2. Query Memory (Analogy)
+        builder.add_node("query_memory", self._node_query_memory)
+        # 3. Triage Signals
+        builder.add_node("triage_signals", self._node_triage_signals)
+        # 4. Final Decision
+        builder.add_node("make_decision", self._node_make_decision)
+        
+        builder.set_entry_point("analyze_macro")
+        builder.add_edge("analyze_macro", "query_memory")
+        builder.add_edge("query_memory", "triage_signals")
+        builder.add_edge("triage_signals", "make_decision")
+        builder.add_edge("make_decision", END)
+        
+        return builder.compile()
+
+    def _node_analyze_macro(self, state: StrategistState):
+        md = state['macro_data']
+        news_sent = md.get('news_sentiment', 0.0) 
+        score = self.radar.get_macro_score(md.get('dxy_change', 0), md.get('sp500_change', 0), news_sent)
+        state['risk_score'] = score
+        state['reasoning'].append(f"Macro Risk Score: {score:.2f}")
+        return state
+
+    def _node_query_memory(self, state: StrategistState):
+        md = state['macro_data']
+        conv = self.memory.get_historical_conviction(md.get('news_sentiment', 0.0), state['risk_score'])
+        state['historical_conviction'] = conv
+        state['reasoning'].append(f"Historical Conviction (Neo4j): {conv:.2f}")
+        return state
+
+    def _node_triage_signals(self, state: StrategistState):
+        # Se o risco for altíssimo, ignorar sinais direcionais (Tier 2/3)
+        if state['risk_score'] < 0.25:
+            state['reasoning'].append("⚠️ Risco Sistêmico: Ignorando sinais de Alpha Direcional.")
+            state['signals']['tier2'] = 0 # Neutro por segurança
+            state['signals']['tier3'] = 0 # Neutro por segurança
+        return state
+
+    def _node_make_decision(self, state: StrategistState):
+        mult, msg = self.radar.get_recommended_position_mult()
+        state['allocation_mult'] = mult
+        
+        # Lógica de decisão
+        if state['signals'].get('tier2', 0) != 0:
+            state['decision'] = "EXECUTE_ALPHA"
+        elif state['signals'].get('tier1', 0) > 0.05:
+            state['decision'] = "EXECUTE_BASIS"
+        else:
+            state['decision'] = "WAIT"
+            
+        # Gravar na Memória de Mercado (Neo4j)
+        md = state['macro_data']
+        self.memory.record_context_and_decision(
+            md.get('news_sentiment', 0.0), 
+            state['risk_score'], 
+            state['decision']
+        )
+            
+        state['reasoning'].append(f"Decisão: {state['decision']} | Multiplicador: {mult} ({msg})")
+        return state
+
+    def assess_trade(self, asset: str, signal: int, probability: float, reason: str):
+        """
+        Avalia um trade específico com base na probabilidade do ML e contexto macro.
+        Retorna: (decision, reason, modifiers)
+        """
         modifiers = {
-            "size_mult": size_mult,
-            "tp_mult":   tp_mult,
-            "sl_mult":   sl_mult
+            'size_mult': 1.0,
+            'tp_mult': 1.0,
+            'sl_mult': 1.0
         }
-
-        # Log for historical tracking
-        log_entry = {
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "asset": asset,
-            "ml_signal": ml_signal,
-            "decision": decision,
-            "reasoning": reasoning_str,
-            "modifiers": modifiers
-        }
-        self.reasoning_log.append(log_entry)
-        if len(self.reasoning_log) > 100: self.reasoning_log.pop(0)
         
-        return decision, reasoning_str, modifiers
+        # 1. Filtro de Probabilidade
+        if probability < 0.60:
+            return "REJECT", f"Probabilidade insuficiente ({probability:.2f})", modifiers
+            
+        # 2. Ajuste por Convicção
+        if probability > 0.80:
+            modifiers['size_mult'] *= 1.2
+            modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta convicção
+            
+        # 3. Filtro Macro (acesso direto ao radar)
+        if self.radar.risk_score < 0.3 and signal == 1:
+            return "REJECT", "Macro Risk Off (No Longs)", modifiers
+            
+        return "APPROVE", f"Aprovado: {reason}", modifiers
 
-    def get_latest_logs(self, limit=5):
-        return self.reasoning_log[-limit:]
+    def run(self, signals: Dict[str, float], macro_data: Dict[str, float]):
+        initial_state = {
+            "signals": signals,
+            "macro_data": macro_data,
+            "risk_score": 0.5,
+            "historical_conviction": 0.5,
+            "decision": "WAIT",
+            "allocation_mult": 1.0,
+            "reasoning": []
+        }
+        return self.workflow.invoke(initial_state)
 
 if __name__ == "__main__":
     agent = StrategistAgent()
-    # Mocking a Buy signal from ML
-    decision, reason = agent.assess_trade("BTCBRL", 1, 0.65, "Confluence (Compra)")
-    print(f"--- STRATEGIST AGENT DECISION ---")
-    print(f"Asset: BTCBRL")
-    print(f"Decision: {decision}")
-    print(f"Reasoning: {reason}")
+    res = agent.run(
+        signals={'tier1': 0.08, 'tier2': 1}, 
+        macro_data={'dxy_change': 0.01, 'sp500_change': -0.015} # Risk Off!
+    )
+    print(json.dumps(res, indent=2))

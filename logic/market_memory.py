@@ -1,54 +1,107 @@
-import json
 import os
 from datetime import datetime
+from neo4j import GraphDatabase
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class MarketMemory:
-    def __init__(self, memory_file="results/market_memory.json"):
-        self.memory_file = memory_file
-        self.episodes = self.load_memory()
+    """
+    Memória de Mercado via Neo4j (Grafo).
+    Armazena e recupera a relação entre Eventos Macro e Reações de Preço.
+    Inspirado na arquitetura de agentes 'Long-term Memory' do @redamon.
+    """
+
+    def __init__(self):
+        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        user = os.getenv("NEO4J_USER", "neo4j")
+        password = os.getenv("NEO4J_PASSWORD", "password")
+        try:
+            self.driver = GraphDatabase.driver(uri, auth=(user, password))
+            self._verify_connection()
+        except Exception as e:
+            print(f"[MEMORY] Falha ao conectar ao Neo4j: {e}")
+            self.driver = None
+
+    def _verify_connection(self):
+        with self.driver.session() as session:
+            session.run("RETURN 1")
+
+    def close(self):
+        if self.driver:
+            self.driver.close()
+
+    def record_context_and_decision(self, news_sentiment: float, macro_risk: float, decision: str):
+        """
+        Cria um snapshot do contexto atual e da decisão tomada.
+        """
+        if not self.driver: return
         
-    def load_memory(self):
-        if os.path.exists(self.memory_file):
-            try:
-                with open(self.memory_file, "r") as f:
-                    return json.load(f)
-            except: pass
-        return []
+        timestamp = datetime.now().isoformat()
         
-    def save_memory(self):
-        with open(self.memory_file, "w") as f:
-            json.dump(self.episodes, f, indent=4)
-            
-    def record_episode(self, regime, volatility, outcome=None):
-        """Records a market episode for future recall."""
-        episode = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "regime": regime,
-            "volatility": volatility,
-            "outcome": outcome # To be updated later after trade closes
-        }
-        self.episodes.append(episode)
-        if len(self.episodes) > 100: self.episodes.pop(0)
-        self.save_memory()
+        # Cypher: Cria nós de Evento, Macro e Decisão com vínculos
+        query = """
+        CREATE (e:Event {sentiment: $sentiment, timestamp: $ts})
+        CREATE (m:MacroState {risk_score: $risk, timestamp: $ts})
+        CREATE (d:Decision {action: $action, timestamp: $ts})
+        MERGE (e)-[:HAPPENED_IN]->(m)
+        MERGE (d)-[:BASED_ON]->(e)
+        RETURN id(d) as decision_id
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query, sentiment=news_sentiment, risk=macro_risk, action=decision, ts=timestamp)
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar contexto: {e}")
+
+    def get_historical_conviction(self, current_sentiment: float, current_risk: float, tolerance: float = 0.2):
+        """
+        Consulta o Grafo por situações similares e retorna o PnL médio.
+        """
+        if not self.driver: return 0.5 # Neutro 
         
-    def recall_similar_regime(self, current_regime):
-        """Finds historical outcomes for a similar regime."""
-        matches = [e for e in self.episodes if e['regime'] == current_regime]
-        if not matches: return None
+        query = """
+        MATCH (e:Event)-[:HAPPENED_IN]->(m:MacroState)
+        WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol
+        MATCH (d:Decision)-[:BASED_ON]->(e)
+        OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)
+        RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, sent=current_sentiment, risk=current_risk, tol=tolerance).single()
+                if result and result["total_occurrences"] > 0:
+                    avg_pnl = result["avg_pnl"] or 0.0
+                    return 0.5 + (avg_pnl * 5.0) # Normaliza PnL para Conviction Score
+                return 0.5
+        except Exception as e:
+            print(f"[MEMORY] Erro ao consultar histórico: {e}")
+            return 0.5
+
+    def record_outcome(self, pnl: float):
+        """
+        Vincula o resultado financeiro à última decisão tomada.
+        """
+        if not self.driver: return
         
-        # Calculate success rate if outcomes are present
-        outcomes = [e['outcome'] for e in matches if e['outcome'] is not None]
-        if not outcomes: return None
-        
-        success_rate = sum(outcomes) / len(outcomes)
-        return {
-            "regime": current_regime,
-            "match_count": len(matches),
-            "historical_success_rate": round(success_rate, 2)
-        }
+        query = """
+        MATCH (d:Decision)
+        WHERE NOT (d)<-[:FOLLOWED]-(:Outcome)
+        WITH d ORDER BY d.timestamp DESC LIMIT 1
+        CREATE (o:Outcome {pnl: $pnl, timestamp: $ts})
+        MERGE (o)-[:FOLLOWED]->(d)
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query, pnl=pnl, ts=datetime.now().isoformat())
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar resultado: {e}")
 
 if __name__ == "__main__":
-    mem = MarketMemory()
-    mem.record_episode("Risk-On", "High", outcome=1)
-    mem.record_episode("Risk-On", "Low", outcome=0)
-    print(f"Recall: {mem.recall_similar_regime('Risk-On')}")
+    memory = MarketMemory()
+    # Teste de gravação
+    memory.record_context_and_decision(0.8, 0.4, "APPROVE")
+    # Teste de consulta
+    conv = memory.get_historical_conviction(0.75, 0.45)
+    print(f"Historical Conviction: {conv:.2f}")
+    memory.close()
