@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 import os
 import time
+import requests
 
 class ScannerCofreHibrido:
     def __init__(self, asset_pair="BTCUSDT", threshold_annual_yield=0.08):
@@ -114,6 +115,22 @@ class ScannerCofreHibrido:
                 f"7. No dia {contract['expiry_date']}, a Binance liquidara a posicao e voce tera recuperado seu capital + o premio da arbitragem."
             ]
         }
+        
+        # Dispara notificacao PUSH via Ntfy
+        titulo = f"OPORTUNIDADE COFRE ({contract['currency']})"
+        mensagem = (
+            f"ALVO: VENDER {contract['symbol']}\n"
+            f"YIELD TOTAL: {contract['yield_apr']*100:.2f}% a.a.\n"
+            f"AGIO CAMBIAL: {forex['agio_cambial_pct']*100:.2f}%" if forex['valido'] else f""
+        )
+        try:
+            requests.post(
+                "http://100.86.220.116:8081/btc_cofre_alerts",
+                data=mensagem.encode('utf-8'),
+                headers={"Title": titulo, "Tags": "rocket,moneybag", "Priority": "high"}
+            )
+        except Exception as e:
+            self.log_event(f"Aviso - Nao foi possivel disparar alerta Push: {e}")
         
         nome_arquivo = 'MANDATO_DE_EXECUCAO.json'
         with open(nome_arquivo, 'w', encoding='utf-8') as f:

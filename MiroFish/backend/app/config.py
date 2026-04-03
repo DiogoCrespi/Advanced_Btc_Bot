@@ -68,8 +68,10 @@ class Config:
     def validate(cls):
         """验证必要配置"""
         errors = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
+        # No novo sistema, exigimos pelo menos a chave principal (GROQ) ou a primeira Gemini
+        if not os.environ.get('GROQ_API_KEY') and not os.environ.get('GEMINI_KEY_1'):
+             errors.append("LLM_API_KEY (ou GROQ/GEMINI) 未配置")
+        # ZEP_API_KEY ainda eh verificado
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
         return errors

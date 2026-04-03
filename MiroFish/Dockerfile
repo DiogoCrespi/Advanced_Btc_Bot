@@ -10,7 +10,7 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./backend/
 
 # 安装 Python 依赖
-RUN cd backend && uv sync --frozen
+RUN cd backend && uv add google-genai && uv sync
 
 # 复制项目源码
 COPY . .
@@ -18,4 +18,4 @@ COPY . .
 EXPOSE 5001
 
 # 启动后端 (Uvicorn)
-CMD ["python", "backend/run.py"]
+CMD ["uv", "run", "--project", "backend", "python", "backend/run.py"]
