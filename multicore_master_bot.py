@@ -30,7 +30,7 @@ from logic.xaut_logic import XAUTAnalyzer
 from logic.market_memory import MarketMemory
 from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
-from logic.news_intelligence import NewsIntelligence
+from logic.mirofish_client import MiroFishClient
 from logic.coingecko_client import CoinGeckoClient
 
 # Forcar unbuffered stdout
@@ -115,7 +115,11 @@ class MulticoreMasterBot:
         # ML Brains
         self.brains = {asset: MLBrain() for asset in assets}
         self.agent = StrategistAgent() 
-        self.news_intel = NewsIntelligence() # Global news sensor
+        self.miro_client = MiroFishClient() # MiroFish AI Agent Swarm
+        self.miro_sim_id = "live_bot_sim"
+        # Garante que a simulação existe
+        self.miro_client.create_simulation("auto_live", self.miro_sim_id)
+        self.miro_client.start_simulation(self.miro_sim_id)
         self.memory = MarketMemory() 
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
@@ -510,7 +514,16 @@ class MulticoreMasterBot:
                 
                 # 0. MACRO ANALYSIS (Agentic Layer)
                 macro_data = self.engine.fetch_macro_data()
-                news_sent  = self.news_intel.get_sentiment_score()
+                
+                # Coletando do Swarm Intelligence (MiroFish)
+                miro_data = self.miro_client.get_sentiment_summary(self.miro_sim_id)
+                m_sent = miro_data['sentiment']
+                m_conf = miro_data['confidence']
+                if m_sent == "Bullish": news_sent = m_conf
+                elif m_sent == "Bearish": news_sent = -m_conf
+                else: news_sent = 0.0
+                print(f"[MIROFISH] Analise de Sentimento Profundo: {m_sent} ({m_conf*100:.1f}%) | Score: {news_sent:.2f}")
+                
                 self.btc_dominance = self.cg_client.get_btc_dominance()
                 
                 self.macro_risk = self.agent.radar.get_macro_score(
