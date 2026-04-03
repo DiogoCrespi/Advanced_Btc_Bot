@@ -159,7 +159,7 @@ class StrategistAgent:
         if signal == -1:
             return "APPROVE", f"Exiting Safe Harbor: {reason}"
 
-        return "REJECT", "Context not optimal for USDT"
+        return "REJECT", "Context not optimal for USDT", {}
 
 if __name__ == "__main__":
     agent = StrategistAgent()

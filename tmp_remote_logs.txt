@@ -1,0 +1,50 @@
+btc_multicore_bot  | Failed to get ticker '^GSPC' reason: Expecting value: line 1 column 1 (char 0)
+btc_multicore_bot  | 
+btc_multicore_bot  | 1 Failed download:
+btc_multicore_bot  | ['^GSPC']: JSONDecodeError('Expecting value: line 1 column 1 (char 0)')
+btc_multicore_bot  | Failed to get ticker 'DX-Y.NYB' reason: Expecting value: line 1 column 1 (char 0)
+btc_multicore_bot  | 
+btc_multicore_bot  | 1 Failed download:
+btc_multicore_bot  | [NOTICIAS] Coletando manchetes do mercado...
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | | >>> ADVANCED MULTICORE BTC BOT | 17:57:19 | Equity: R$   1000.39 |
+btc_multicore_bot  | | Saldo Disponivel: R$   814.51  | USDT:       0.00              |
+btc_multicore_bot  | | Macro Risk Score:   0.50    | Recommendation: ⚖️ Macro Neutro: Mão Padrão     |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | ['DX-Y.NYB']: JSONDecodeError('Expecting value: line 1 column 1 (char 0)')
+btc_multicore_bot  | | [PORTFOLIO] Ativos em Carteira:                                        |
+btc_multicore_bot  | |    SOLBRL    :   0.104278 COMPRA | Valor: R$   504.99 | PnL: +1.00% |
+btc_multicore_bot  | |    BTCBRL  #1:   0.000145 VENDA  | Valor: R$   497.84 | PnL: -0.43% |
+btc_multicore_bot  | |    BTCBRL  #2:   0.000138 VENDA  | Valor: R$   497.83 | PnL: -0.43% |
+btc_multicore_bot  | |    ETHBRL    :   0.004215 VENDA  | Valor: R$   504.24 | PnL: +0.85% |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | [DEBUG] Entrando em fetch_delivery_contracts para BTC...
+btc_multicore_bot  | [DEBUG] Fazendo requests.get para https://dapi.binance.com/dapi/v1/exchangeInfo...
+btc_multicore_bot  | [DEBUG] Resposta recebida. Status: 200
+btc_multicore_bot  | [DEBUG] Saindo de fetch_delivery_contracts. Encontrados: 2
+btc_multicore_bot  | | [COFRE BRL] Melhor Yield BTC Futuros:   3.10% a.a.                  |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | Fetching Binance Klines for USDTBRL...
+btc_multicore_bot  | [USDT] Erro Loop: 'StrategistAgent' object has no attribute 'assess_usdt_opportunity'
+btc_multicore_bot  | | [ALPHA ML ] Sinais baseados em Order Flow & ML:                       |
+btc_multicore_bot  | Fetching Binance Klines for ETHBRL...Fetching Binance Klines for BTCBRL...
+btc_multicore_bot  | Fetching Binance Klines for SOLBRL...
+btc_multicore_bot  | 
+btc_multicore_bot  | |    ETHBRL : -1 | Prob: 59.9% | Confluencia ML                 |
+btc_multicore_bot  | |    BTCBRL :  0 | Prob: 42.9% | Conviccao Baixa (42.9%)        |
+btc_multicore_bot  | |    SOLBRL :  0 | Prob: 46.0% | Conviccao Baixa (46.0%)        |
+btc_multicore_bot  | Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `pnl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=6, column=22, offset=256>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 256, 'line': 6, 'column': 22}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (e:Event)-[:HAPPENED_IN]->(m:MacroState)\n        WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol\n        MATCH (d:Decision)-[:BASED_ON]->(e)\n        OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)\n        RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences\n        '
+btc_multicore_bot  | Received notification from DBMS server: <GqlStatusObject gql_status='01N01', status_description='warn: feature deprecated with replacement. id is deprecated. It is replaced by elementId or consider using an application-generated id.', position=<SummaryInputPosition line=7, column=16, offset=282>, raw_classification='DEPRECATION', classification=<NotificationClassification.DEPRECATION: 'DEPRECATION'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'DEPRECATION', '_severity': 'WARNING', '_position': {'offset': 282, 'line': 7, 'column': 16}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        CREATE (e:Event {sentiment: $sentiment, timestamp: $ts})\n        CREATE (m:MacroState {risk_score: $risk, timestamp: $ts})\n        CREATE (d:Decision {action: $action, timestamp: $ts})\n        MERGE (e)-[:HAPPENED_IN]->(m)\n        MERGE (d)-[:BASED_ON]->(e)\n        RETURN id(d) as decision_id\n        '
+btc_multicore_bot  | | [STRATEGIST] Decisao: EXECUTE_ALPHA | Mult: 1.00 |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | Fetching Binance Klines for XAUTBTC...
+btc_multicore_bot  | | [XAUT/BTC] Ratio: 0.069240 BTC/XAUT | RSI ratio:  18.8 | BB%: 0.24        |
+btc_multicore_bot  | | Pool BTC: 0.00028 BTC livre   | Posicoes: 0/3 | PnL latente: +0.000000 BTC         |
+btc_multicore_bot  | |   . Sinal: Ratio Neutro                   | Conf: 0% | Thresh: 55%   |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | | # LOG RECENTE:                                                        |
+btc_multicore_bot  | | > [13:48:33] ABERTO SOLBRL (1.0x): @ 411.10 | BRL: 814.51              |
+btc_multicore_bot  | | > [07:48:49] ABERTO ETHBRL (1.0x): @ 10706.32 | BRL: 857.38            |
+btc_multicore_bot  | | > [04:01:10] ABERTO BTCBRL (1.0x): @ 344742.00 | BRL: 902.50           |
+btc_multicore_bot  | | > [04:00:32] ABERTO BTCBRL (1.0x): @ 344750.00 | BRL: 950.00           |
+btc_multicore_bot  | +------------------------------------------------------------------------+
