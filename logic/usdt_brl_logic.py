@@ -58,11 +58,10 @@ class UsdtBrlLogic:
         if df.empty or len(df) < 2:
             return 0, 0.0, "Dados insuficientes"
 
-        last = df.iloc[-1]
-        rsi = float(last.get('rsi', 50.0))
-        bb_pct = float(last.get('bb_pct', 0.5))
-        slope = float(last.get('slope', 0.0))
-        price = float(last['close'])
+        rsi = float(df['rsi'].values[-1]) if 'rsi' in df.columns else 50.0
+        bb_pct = float(df['bb_pct'].values[-1]) if 'bb_pct' in df.columns else 0.5
+        slope = float(df['slope'].values[-1]) if 'slope' in df.columns else 0.0
+        price = float(df['close'].values[-1])
 
         signal = 0
         confidence = 0.0

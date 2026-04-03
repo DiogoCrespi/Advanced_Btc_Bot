@@ -278,9 +278,8 @@ class MulticoreMasterBot:
             display_lines.append("| [USDT/BRL] Sem dados disponíveis — aguardando...            |")
             return display_lines
 
-        last_row = df_usdt.iloc[-1]
-        current_price = float(last_row['close'])
-        rsi_usdt = float(last_row.get('rsi', 50))
+        current_price = float(df_usdt['close'].values[-1])
+        rsi_usdt = float(df_usdt['rsi'].values[-1]) if 'rsi' in df_usdt.columns else 50.0
         
         # 1. Obter sinal da lógica
         macro_summary = self.agent.intel.get_summary()
@@ -358,10 +357,9 @@ class MulticoreMasterBot:
             display_lines.append("| [XAUT/BTC] Sem dados disponíveis — aguardando...            |")
             return display_lines
 
-        last_row      = df_xaut.iloc[-1]
-        current_ratio = float(last_row['close'])
-        rsi_ratio     = float(last_row.get('ratio_rsi', 50))
-        bb_pct        = float(last_row.get('bb_pct', 0.5))
+        current_ratio = float(df_xaut['close'].values[-1])
+        rsi_ratio     = float(df_xaut['ratio_rsi'].values[-1]) if 'ratio_rsi' in df_xaut.columns else 50.0
+        bb_pct        = float(df_xaut['bb_pct'].values[-1]) if 'bb_pct' in df_xaut.columns else 0.5
 
         signal, confidence, reason = self.xaut_analyzer.get_signal(df_xaut)
 

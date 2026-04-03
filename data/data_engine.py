@@ -55,12 +55,12 @@ class DataEngine:
             # 1. Process S&P 500
             if not sp500.empty and len(sp500) >= 2:
                 if isinstance(sp500.columns, pd.MultiIndex): sp500.columns = sp500.columns.droplevel(1)
-                sp500_change = (sp500['Close'].iloc[-1] / sp500['Close'].iloc[-2]) - 1
+                sp500_change = float(sp500['Close'].values[-1] / sp500['Close'].values[-2]) - 1
             
             # 2. Process DXY
             if not dxy.empty and len(dxy) >= 2:
                 if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
-                dxy_change = (dxy['Close'].iloc[-1] / dxy['Close'].iloc[-2]) - 1
+                dxy_change = float(dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1
 
         except Exception as e:
             # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot

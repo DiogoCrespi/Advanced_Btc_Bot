@@ -37,12 +37,12 @@ class IntelligenceManager:
             sentiment_data = self.fetch_news_sentiment()
             
             data = {
-                "dxy_close": dxy['Close'].iloc[-1],
-                "dxy_change": (dxy['Close'].iloc[-1] / dxy['Close'].iloc[-2]) - 1,
-                "gold_close": gold['Close'].iloc[-1],
-                "gold_change": (gold['Close'].iloc[-1] / gold['Close'].iloc[-2]) - 1,
-                "sp500_close": sp500['Close'].iloc[-1],
-                "sp500_change": (sp500['Close'].iloc[-1] / sp500['Close'].iloc[-2]) - 1,
+                "dxy_close": float(dxy['Close'].values[-1]),
+                "dxy_change": float(dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1,
+                "gold_close": float(gold['Close'].values[-1]),
+                "gold_change": float(gold['Close'].values[-1] / gold['Close'].values[-2]) - 1,
+                "sp500_close": float(sp500['Close'].values[-1]),
+                "sp500_change": float(sp500['Close'].values[-1] / sp500['Close'].values[-2]) - 1,
                 "news_sentiment": sentiment_data['score'],
                 "news_signal": sentiment_data['signal'],
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
