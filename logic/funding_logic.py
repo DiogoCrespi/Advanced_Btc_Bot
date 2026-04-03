@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 import numpy as np
 
@@ -11,7 +12,7 @@ class FundingLogic:
     def calculate_annualized_funding(self, funding_rate_8h):
         """
         Converte a taxa de funding de 8h para anualizada.
-        Cálculo: (1 + rate)^ (3 * 365) - 1  (Considerando juros compostos)
+        Calculo: (1 + rate)^ (3 * 365) - 1  (Considerando juros compostos)
         Ou simplificado: rate * 3 * 365
         """
         annualized = funding_rate_8h * 3 * 365
@@ -19,8 +20,8 @@ class FundingLogic:
 
     def get_signal(self, current_funding_8h, historical_fundings):
         """
-        Retorna sinal de entrada/saída baseado na taxa anualizada.
-        historical_fundings: lista ou série das últimas taxas para detectar negatividade persistente.
+        Retorna sinal de entrada/saida baseado na taxa anualizada.
+        historical_fundings: lista ou serie das ultimas taxas para detectar negatividade persistente.
         """
         annualized = self.calculate_annualized_funding(current_funding_8h)
         
@@ -28,7 +29,7 @@ class FundingLogic:
         if annualized > self.risk_free_rate_annual:
             return 1 # ENTRAR (Long Spot / Short Future)
             
-        # Regra de Saída: Funding negativo persistente (5 ciclos)
+        # Regra de Saida: Funding negativo persistente (5 ciclos)
         if len(historical_fundings) >= 5:
             last_5 = historical_fundings[-5:]
             if all(f < 0 for f in last_5):

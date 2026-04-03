@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 OASIS 双平台并行模拟预设脚本
 同时运行Twitter和Reddit模拟，读取相同的配置文件

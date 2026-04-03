@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from basis_logic import BasisLogic
 import json
@@ -18,7 +19,7 @@ class ScannerCofreHibrido:
         self.threshold = threshold_annual_yield
         self.log_file = "scanner_history.log"
         
-        # Reaproveitando os módulos core
+        # Reaproveitando os modulos core
         self.engine = DataEngine()
         self.logic = BasisLogic()
 
@@ -49,7 +50,7 @@ class ScannerCofreHibrido:
                             y = self.logic.calculate_annualized_yield(data['spot'], data['future'], expiry)
                             results.append({**data, 'symbol': symbol, 'yield_apr': y, 'expiry_date': str(expiry)})
                     
-                    # NOVA LÓGICA: Priorizar o contrato mais PRÓXIMO que atenda o threshold
+                    # NOVA LOGICA: Priorizar o contrato mais PROXIMO que atenda o threshold
                     best = self.logic.get_earliest_profitable_contract(results, self.threshold)
                     
                     if best:
@@ -57,13 +58,13 @@ class ScannerCofreHibrido:
                         self.gerar_ordem_de_servico(best)
                         break
                     else:
-                        # Se nenhum bater o threshold, mostramos o melhor yield disponível apenas para log
+                        # Se nenhum bater o threshold, mostramos o melhor yield disponivel apenas para log
                         highest = self.logic.get_best_contract(results)
                         current_best_yield = (highest['yield_apr'] * 100) if highest else 0
-                        self.log_event(f"📈 Monitorando... Alvo {self.threshold*100:.0f}% não atingido. Melhor atual: {current_best_yield:.2f}% a.a.")
+                        self.log_event(f"📈 Monitorando... Alvo {self.threshold*100:.0f}% nao atingido. Melhor atual: {current_best_yield:.2f}% a.a.")
 
             except Exception as e:
-                self.log_event(f"❌ Erro durante verificação: {e}")
+                self.log_event(f"❌ Erro durante verificacao: {e}")
             
             time.sleep(60)
 
@@ -75,12 +76,12 @@ class ScannerCofreHibrido:
         self.log_event(f"🚀 OPORTUNIDADE DETECTADA ({contract['currency']})! 🚀")
         self.log_event(f"{'='*65}")
         self.log_event(f"📌 Contrato Alvo:    {contract['symbol']}")
-        self.log_event(f"💰 Preço Spot:       {moeda_spot} {contract['spot_raw']:.2f}")
+        self.log_event(f"💰 Preco Spot:       {moeda_spot} {contract['spot_raw']:.2f}")
         if contract['currency'] == "BRL":
-            self.log_event(f"💱 Taxa Conversão:   {contract['fx_rate']:.4f} USDT/BRL")
+            self.log_event(f"💱 Taxa Conversao:   {contract['fx_rate']:.4f} USDT/BRL")
             self.log_event(f"💵 Spot Normalizado: US$ {contract['spot']:.2f}")
             
-        self.log_event(f"🎯 Preço Futuro:     US$ {contract['future']:.2f}")
+        self.log_event(f"🎯 Preco Futuro:     US$ {contract['future']:.2f}")
         self.log_event(f"📈 Yield Anualizado: {contract['yield_apr']*100:.2f}% a.a.")
         self.log_event(f"📅 Data Vencimento:  {contract['expiry_date']}")
         self.log_event(f"{'='*65}")
@@ -96,8 +97,8 @@ class ScannerCofreHibrido:
                 f"3. Transfira esse {self.asset} da carteira 'Spot' para a carteira 'Futuros COIN-M'.",
                 f"4. Siga para Futuros COIN-M e selecione o contrato {contract['symbol']}.",
                 f"5. Abra uma ordem de VENDA (SHORT) usando 1x de alavancagem.",
-                f"6. PRONTO! Seu lucro está matematicamente travado em BTC.",
-                f"7. No dia {contract['expiry_date']}, a Binance liquidará a posição e você terá recuperado seu capital + o prêmio da arbitragem."
+                f"6. PRONTO! Seu lucro esta matematicamente travado em BTC.",
+                f"7. No dia {contract['expiry_date']}, a Binance liquidara a posicao e voce tera recuperado seu capital + o premio da arbitragem."
             ]
         }
         
@@ -105,7 +106,7 @@ class ScannerCofreHibrido:
         with open(nome_arquivo, 'w', encoding='utf-8') as f:
             json.dump(instrucoes, f, indent=4, ensure_ascii=False)
             
-        self.log_event(f"\n📋 Instruções de execução tática salvas no arquivo: {nome_arquivo}")
+        self.log_event(f"\n📋 Instrucoes de execucao tatica salvas no arquivo: {nome_arquivo}")
 
 if __name__ == "__main__":
     # Para rodar BRL, basta passar BTCBRL

@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 日志配置模块
 提供统一的日志管理，同时输出到控制台和文件

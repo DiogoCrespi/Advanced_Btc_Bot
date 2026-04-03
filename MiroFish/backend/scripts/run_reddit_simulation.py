@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 OASIS Reddit模拟预设脚本
 此脚本读取配置文件中的参数来执行模拟，实现全程自动化

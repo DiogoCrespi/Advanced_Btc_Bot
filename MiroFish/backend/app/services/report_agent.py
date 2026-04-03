@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 Report Agent服务
 使用LangChain + Zep实现ReACT模式的模拟报告生成
@@ -664,7 +665,7 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
    - 如果某方面信息不足，如实说明
 
 ═══════════════════════════════════════════════════════════════
-【⚠️ 格式规范 - 极其重要！】
+【⚠ 格式规范 - 极其重要！】
 ═══════════════════════════════════════════════════════════════
 
 【一个章节 = 最小内容单位】
@@ -729,7 +730,7 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
 选项B - 输出最终内容：
 当你已通过工具获取了足够信息，以 "Final Answer:" 开头输出章节内容。
 
-⚠️ 严格禁止：
+⚠ 严格禁止：
 - 禁止在一次回复中同时包含工具调用和 Final Answer
 - 禁止自己编造工具返回结果（Observation），所有工具结果由系统注入
 - 每次回复最多调用一个工具
@@ -779,7 +780,7 @@ SECTION_USER_PROMPT_TEMPLATE = """\
 3. 请混合使用不同工具，不要只用一种
 4. 报告内容必须来自检索结果，不要使用自己的知识
 
-【⚠️ 格式警告 - 必须遵守】
+【⚠ 格式警告 - 必须遵守】
 - ❌ 不要写任何标题（#、##、###、####都不行）
 - ❌ 不要写"{section_title}"作为开头
 - ✅ 章节标题由系统自动添加

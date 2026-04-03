@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 OASIS模拟运行器
 在后台运行模拟并记录每个Agent的动作，支持实时状态监控

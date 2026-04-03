@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -10,7 +11,7 @@ def analyze_frequency(asset="BTC-USD", years=1):
     engine = DataEngine()
     brain = MLBrain()
     
-    print(f"⏳ Buscando {years} ano(s) de histórico para análise...")
+    print(f"⏳ Buscando {years} ano(s) de historico para analise...")
     df = yf.download(asset, period=f"{years}y", interval="1h")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -34,8 +35,8 @@ def analyze_frequency(asset="BTC-USD", years=1):
     thresholds = [0.6, 0.7, 0.8]
     results = {}
     
-    print(f"\n📊 ANÁLISE DE DENSIDADE DE SINAIS (Total: {len(test_data)} horas)\n")
-    print(f"{'Confiança':<12} | {'Sinais':<10} | {'Trades/Mês':<12} | {'Espera Média':<15}")
+    print(f"\n📊 ANALISE DE DENSIDADE DE SINAIS (Total: {len(test_data)} horas)\n")
+    print(f"{'Confianca':<12} | {'Sinais':<10} | {'Trades/Mes':<12} | {'Espera Media':<15}")
     print("-" * 60)
     
     for thr in thresholds:
@@ -59,12 +60,12 @@ def analyze_frequency(asset="BTC-USD", years=1):
         print(f"{thr:>10.0%}   | {signals:>10} | {monthly_avg:>12.1f} | {avg_wait:>12.1f} horas")
         results[thr] = monthly_avg
 
-    print("\n💡 CONCLUSÃO:")
+    print("\n💡 CONCLUSAO:")
     if results[0.7] < 2:
-        print("⚠️  70%+ de confiança é muito RARO (custo de oportunidade alto).")
-        print("👉 Sugestão: Use 65% para manter o robô ativo ou adicione mais moedas (ETH/SOL).")
+        print("⚠  70%+ de confianca e muito RARO (custo de oportunidade alto).")
+        print("👉 Sugestao: Use 65% para manter o robo ativo ou adicione mais moedas (ETH/SOL).")
     else:
-        print(f"✅ 70%+ gera {results[0.7]:.1f} trades por mês. É um bom equilíbrio.")
+        print(f"✅ 70%+ gera {results[0.7]:.1f} trades por mes. E um bom equilibrio.")
 
 if __name__ == "__main__":
     analyze_frequency()

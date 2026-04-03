@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 Zep检索工具服务
 封装图谱搜索、节点读取、边查询等工具，供Report Agent使用

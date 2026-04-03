@@ -1,9 +1,10 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import sys
 import os
 from datetime import datetime, timedelta
 
-# Adiciona o diretório 'logic' ao path
+# Adiciona o diretorio 'logic' ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
 
 from basis_logic import BasisLogic
@@ -13,7 +14,7 @@ def test_basis_calculation():
     spot_price = 350000.0  # BTCBRL
     fut_price = 360000.0   # BTCBRL_260626
     
-    # Simula expiração em 1 ano
+    # Simula expiracao em 1 ano
     expiry_date = datetime.now() + timedelta(days=365)
     
     yield_apr = logic.calculate_annualized_yield(spot_price, fut_price, expiry_date)
@@ -34,7 +35,7 @@ def test_best_contract():
     assert best['symbol'] == 'CONT2'
 
 def test_basis_zero_price_handling():
-    """TESTE DE REJEIÇÃO: Preços zero não devem causar crash."""
+    """TESTE DE REJEICAO: Precos zero nao devem causar crash."""
     logic = BasisLogic()
     # Caso 1: Spot zero
     yield_apr = logic.calculate_annualized_yield(0, 360000, datetime.now() + timedelta(days=365))

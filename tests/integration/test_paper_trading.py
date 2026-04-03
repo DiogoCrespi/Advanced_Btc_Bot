@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import os
 import sys
@@ -6,14 +7,14 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import numpy as np
 
-# Adiciona o diretório raiz ao path
+# Adiciona o diretorio raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from multicore_master_bot import MulticoreMasterBot
 
 @pytest.fixture
 def mock_bot():
-    """Inicializa o bot com dependências mockadas para evitar chamadas de rede."""
+    """Inicializa o bot com dependencias mockadas para evitar chamadas de rede."""
     with patch('multicore_master_bot.DataEngine') as mock_engine, \
          patch('multicore_master_bot.MLBrain') as mock_brain, \
          patch('multicore_master_bot.Client') as mock_client:
@@ -43,20 +44,20 @@ def mock_bot():
         return bot
 
 def test_paper_trading_initialization(mock_bot):
-    """Verifica se o bot inicia com saldo padrão de R$ 1000 em modo simulação."""
+    """Verifica se o bot inicia com saldo padrao de R$ 1000 em modo simulacao."""
     assert mock_bot.live_mode == False
     assert mock_bot.balance >= 1000.0
     assert mock_bot.usdt_balance == 0.0
 
 def test_paper_trading_process_usdt(mock_bot):
     """Simula o processamento de USDT no modo Paper Trading."""
-    # Forçamos um sinal de compra de USDT
+    # Forcamos um sinal de compra de USDT
     mock_bot.usdt_logic.get_signal = MagicMock(return_value=(1, 0.9, "Test Buy"))
     mock_bot.agent.assess_usdt_opportunity = MagicMock(return_value=("APPROVE", "Test Reason"))
     
     mock_bot._process_usdt("12:00:00")
     
-    # Saldo BRL deve ter diminuído e saldo USDT aumentado
+    # Saldo BRL deve ter diminuido e saldo USDT aumentado
     assert mock_bot.balance < 1000.0
     assert mock_bot.usdt_balance > 0.0
     
@@ -64,7 +65,7 @@ def test_paper_trading_process_usdt(mock_bot):
     assert os.path.exists("results/signals_log.txt")
 
 def test_paper_trading_save_state(mock_bot):
-    """Verifica se o estado é salvo corretamente em JSON."""
+    """Verifica se o estado e salvo corretamente em JSON."""
     mock_bot.balance = 1234.56
     mock_bot.save_state()
     

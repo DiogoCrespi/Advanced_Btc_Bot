@@ -1,10 +1,11 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import pandas as pd
 import numpy as np
 import sys
 import os
 
-# Adiciona o diretório 'logic' ao path
+# Adiciona o diretorio 'logic' ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
@@ -45,7 +46,7 @@ def test_detect_fvg_bearish():
 
 def test_classify_breakaway():
     logic = GapLogic()
-    # Consolidação lateral lateral (trend < 1%)
+    # Consolidacao lateral lateral (trend < 1%)
     df = pd.DataFrame({
         'open':   [100.0]*30,
         'close':  [100.0]*30,
@@ -68,9 +69,9 @@ def test_classify_breakaway():
 
 def test_classify_exhaustion():
     logic = GapLogic()
-    # Tendência de alta EXTREMAMENTE esticada
-    # Usando rampa agressiva para bater abs(trend) > 0.05 nos últimos 10 candles
-    prices = np.linspace(100, 200, 31) # Dobro do preço
+    # Tendencia de alta EXTREMAMENTE esticada
+    # Usando rampa agressiva para bater abs(trend) > 0.05 nos ultimos 10 candles
+    prices = np.linspace(100, 200, 31) # Dobro do preco
     df = pd.DataFrame({
         'open':   prices,
         'close':  prices,
@@ -88,17 +89,17 @@ def test_classify_exhaustion():
     })
     df = pd.concat([df, new_row]).reset_index(drop=True)
     
-    # Índice 31 é a nova linha
+    # Indice 31 e a nova linha
     gap_type = logic.classify_gap(df, 31)
     assert gap_type == "Exhaustion"
 
 def test_gap_logic_insufficient_data():
-    """TESTE DE REJEIÇÃO: Dados insuficientes não devem causar crash."""
+    """TESTE DE REJEICAO: Dados insuficientes nao devem causar crash."""
     logic = GapLogic()
     # Caso 1: DataFrame com apenas 1 linha para FVG (Precisa de 3)
     df_short = pd.DataFrame({'high':[100], 'low':[90], 'close':[95], 'open':[92]})
     df_feat = logic.detect_fvg(df_short)
-    # Deve lidar sem erro de índice (usando .shift(2) no numpy/pandas retorna NaN mas não crasha)
+    # Deve lidar sem erro de indice (usando .shift(2) no numpy/pandas retorna NaN mas nao crasha)
     assert df_feat['fvg_bullish'].isnull().all() or (df_feat['fvg_bullish'] == 0).all()
     
     # Caso 2: Classify gap com row_idx baixo (< 20)

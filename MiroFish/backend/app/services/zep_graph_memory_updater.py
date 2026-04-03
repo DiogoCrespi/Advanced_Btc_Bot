@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 Zep图谱记忆更新服务
 将模拟中的Agent活动动态更新到Zep图谱中

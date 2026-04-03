@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from order_flow_logic import OrderFlowLogic
 from ml_brain import MLBrain
@@ -22,7 +23,7 @@ class StrategyOptimizer:
         df = self.df.copy()
         
         if use_ml:
-            print(f"🧠 [ML MODE] Treinando cérebro para {self.asset}...")
+            print(f"🧠 [ML MODE] Treinando cerebro para {self.asset}...")
             # Train on the first part of data
             self.ml_brain.train(df.iloc[:len(df)//2])
             df = self.ml_brain.prepare_features(df)
@@ -121,7 +122,7 @@ def run_comparative_analysis():
     cofre_dd = 0.05 / 100
     all_results.append({
         'Asset': 'VARIOUS',
-        'Tier': '🛡️ COFRE (Basis)',
+        'Tier': '🛡 COFRE (Basis)',
         'Return (%)': cofre_return * 100,
         'Drawdown (%)': cofre_dd * 100,
         'Ratio': (cofre_return / cofre_dd) if cofre_dd > 0 else 0
@@ -135,7 +136,7 @@ def run_comparative_analysis():
     ]
 
     print("\n" + "="*70)
-    print("🧪 INICIANDO ANÁLISE COMPARATIVA DE ALTO IMPACTO (BTC vs ETH vs SOL)")
+    print("🧪 INICIANDO ANALISE COMPARATIVA DE ALTO IMPACTO (BTC vs ETH vs SOL)")
     print("="*70)
 
     for asset in assets:
@@ -154,7 +155,7 @@ def run_comparative_analysis():
 
     # Final Report Generation
     print("\n" + "="*70)
-    print("🏆 RELATÓRIO FINAL: BUSCA PELO MAIOR LUCRO (THE PROFIT KING)")
+    print("🏆 RELATORIO FINAL: BUSCA PELO MAIOR LUCRO (THE PROFIT KING)")
     print("="*70)
     
     df_results = pd.DataFrame(all_results)
@@ -170,7 +171,7 @@ def run_comparative_analysis():
 
     # Save to file
     df_results.to_csv("comparativo_lucro_final.csv", index=False)
-    print("📊 Relatório salvo em 'comparativo_lucro_final.csv'")
+    print("📊 Relatorio salvo em 'comparativo_lucro_final.csv'")
 
 if __name__ == "__main__":
     run_comparative_analysis()

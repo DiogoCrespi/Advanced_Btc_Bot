@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 模拟相关API路由
 Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化）

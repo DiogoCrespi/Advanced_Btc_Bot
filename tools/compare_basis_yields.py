@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from basis_logic import BasisLogic
 from datetime import datetime
@@ -16,7 +17,7 @@ def run_comparison():
         print("X Nenhum contrato encontrado.")
         return
 
-    # Usaremos o contrato mais próximo para comparação
+    # Usaremos o contrato mais proximo para comparacao
     target_symbol = contracts[0]['symbol']
     expiry = logic.parse_expiry(target_symbol)
     

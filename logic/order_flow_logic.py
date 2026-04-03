@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 import numpy as np
 
@@ -8,7 +9,7 @@ class OrderFlowLogic:
     def calculate_avwap(self, df, anchor_time):
         """
         Calculates Anchored VWAP starting from a specific timestamp.
-        Matemática: (Preço * Volume).cumsum() / Volume.cumsum()
+        Matematica: (Preco * Volume).cumsum() / Volume.cumsum()
         """
         df = df.copy()
         # Filter data from anchor_time onwards

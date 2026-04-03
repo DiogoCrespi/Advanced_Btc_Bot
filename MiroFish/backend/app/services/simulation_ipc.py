@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 模拟IPC通信模块
 用于Flask后端和模拟脚本之间的进程间通信

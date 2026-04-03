@@ -1,8 +1,9 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import sys
 import os
 
-# Adiciona o diretório 'logic' ao path
+# Adiciona o diretorio 'logic' ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data')))
 
@@ -23,7 +24,7 @@ def test_xaut_buy_signal(xaut_buy_signal_df):
     assert len(df_feat) > 0
     signal, confidence, reason = analyzer.get_signal(df_feat)
     
-    # É aceitável sinal 0 se a confiança for baixa, mas o motivo deve indicar a direção ou o filtro
+    # E aceitavel sinal 0 se a confianca for baixa, mas o motivo deve indicar a direcao ou o filtro
     assert signal in [0, 1]
     if signal == 1:
         assert confidence >= analyzer.MIN_CONFIDENCE
@@ -41,18 +42,18 @@ def test_xaut_sell_signal(xaut_sell_signal_df):
     assert "XAUT" in reason or "Neutro" in reason
 
 def test_xaut_dca_rejection():
-    """TESTE DE REJEIÇÃO: Não deve permitir DCA se o preço estiver muito próximo da entrada anterior."""
+    """TESTE DE REJEICAO: Nao deve permitir DCA se o preco estiver muito proximo da entrada anterior."""
     analyzer = XAUTAnalyzer()
     existing_positions = [
         {'id': 1, 'ratio_entry': 0.05, 'xaut_qty': 0.01}
     ]
     
-    # Caso 1: Preço muito próximo (0.5% de distância, limite é 1.5%)
+    # Caso 1: Preco muito proximo (0.5% de distancia, limite e 1.5%)
     current_ratio = 0.0501 
     allowed = analyzer.is_dca_allowed(existing_positions, current_ratio, min_distance_pct=0.015)
     assert allowed == False
     
-    # Caso 2: Preço longe o suficiente (2% de distância)
+    # Caso 2: Preco longe o suficiente (2% de distancia)
     current_ratio = 0.0515
     allowed = analyzer.is_dca_allowed(existing_positions, current_ratio, min_distance_pct=0.015)
     assert allowed == True

@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """Zep Graph 分页读取工具。
 
 Zep 的 node/edge 列表接口使用 UUID cursor 分页，

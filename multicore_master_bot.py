@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import time
 import os
 import sys
@@ -31,7 +32,7 @@ from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
 from logic.news_intelligence import NewsIntelligence
 
-# Forçar unbuffered stdout
+# Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
 
 class NumpyEncoder(json.JSONEncoder):
@@ -62,12 +63,12 @@ class MulticoreMasterBot:
         self.start_time = datetime.now()  # Uptime tracking
         self.equity_history = [] # For dashboard charts
         
-        # Validar modo de execução
+        # Validar modo de execucao
         if self.live_mode:
             print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO! Validando chaves API...")
             self._validate_api_keys()
         else:
-            print("[SISTEMA] 🎮 Modo SIMULAÇÃO (Paper Trading) Misto.")
+            print("[SISTEMA] 🎮 Modo SIMULACAO (Paper Trading) Misto.")
         
         self.trade_amount = 100.0   # Base fallback
         self.risk_per_trade_pct = 0.05 # 5% per trade
@@ -83,13 +84,13 @@ class MulticoreMasterBot:
         self.balance_file = "results/balance_state.txt"
         self.paper_log = "results/paper_trades_log.txt"
 
-        # ── TIER 3: Estratégia XAUT/BTC ──────────────────────────────────────
-        # Agora o capital vem das posições abertas de BTCBRL
+        # ── TIER 3: Estrategia XAUT/BTC ──────────────────────────────────────
+        # Agora o capital vem das posicoes abertas de BTCBRL
         self.xaut_max_positions   = int(os.getenv("XAUT_MAX_POSITIONS",      "3"))
         self.xaut_sl_pct          = float(os.getenv("XAUT_STOP_LOSS_PCT",    "0.02"))
         self.xaut_tp_pct          = float(os.getenv("XAUT_TAKE_PROFIT_PCT",  "0.04"))
         self.xaut_signal_threshold= 0.55 
-        self.xaut_positions       = []     # Lista de posições abertas em XAUT
+        self.xaut_positions       = []     # Lista de posicoes abertas em XAUT
         self.xaut_pos_counter     = 0
         self.xaut_log             = "results/xaut_trades.txt"
         self.xaut_analyzer        = XAUTAnalyzer()
@@ -175,7 +176,7 @@ class MulticoreMasterBot:
             return self.balance # fallback
             
     def format_quantity(self, asset, raw_qty):
-        """Formata a fração da ordem perfeitamente no stepSize obrigatório da Binance para evitar falha no envio."""
+        """Formata a fracao da ordem perfeitamente no stepSize obrigatorio da Binance para evitar falha no envio."""
         try:
             info = self.client.get_symbol_info(asset)
             step_size = None
@@ -235,7 +236,7 @@ class MulticoreMasterBot:
                     self.trade_amount = data.get("trade_amount", 500.0)
                     self.usdt_balance = data.get("usdt_balance", 0.0)
                     self.last_sentiment = data.get("sentiment", self.last_sentiment)
-                    # Restaurar posições XAUT/BTC
+                    # Restaurar posicoes XAUT/BTC
                     self.xaut_positions = data.get("xaut_positions", [])
                     self.xaut_pos_counter = data.get("xaut_pos_counter", 0)
                     
@@ -265,24 +266,24 @@ class MulticoreMasterBot:
             print(f"Erro ao enfileirar estado: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # TIER 3 — Estratégia XAUT/BTC
+    # TIER 3 — Estrategia XAUT/BTC
     # ─────────────────────────────────────────────────────────────────────────
 
     def _process_usdt(self, timestamp: str) -> list:
         """
-        Processa a lógica de USDT/BRL (Porto Seguro e Média Reversão).
+        Processa a logica de USDT/BRL (Porto Seguro e Media Reversao).
         """
         display_lines = []
         df_usdt = self.engine.fetch_usdt_brl_data(limit=300)
         if df_usdt.empty:
-            display_lines.append("| [USDT/BRL] Sem dados disponíveis — aguardando...            |")
+            display_lines.append("| [USDT/BRL] Sem dados disponiveis — aguardando...            |")
             return display_lines
 
         last_row = df_usdt.iloc[-1]
         current_price = float(last_row['close'])
         rsi_usdt = float(last_row.get('rsi', 50))
         
-        # 1. Obter sinal da lógica
+        # 1. Obter sinal da logica
         macro_summary = self.agent.intel.get_summary()
         macro_risk = macro_summary['risk_score']
         signal, confidence, reason = self.usdt_logic.get_signal(df_usdt, macro_risk)
@@ -292,7 +293,7 @@ class MulticoreMasterBot:
         
         if decision == "APPROVE":
             if signal == 1: # COMPRAR USDT com BRL
-                # Alocação: 30% do saldo BRL ou trade_amount (o que for maior, respeitando limite)
+                # Alocacao: 30% do saldo BRL ou trade_amount (o que for maior, respeitando limite)
                 amount_to_spend = max(self.balance * 0.3, self.trade_amount)
                 if self.balance >= amount_to_spend:
                     qty_usdt = amount_to_spend / current_price
@@ -305,7 +306,7 @@ class MulticoreMasterBot:
                     
                     self.balance -= amount_to_spend
                     self.usdt_balance += qty_usdt
-                    log_msg = f"[{timestamp}] COMPRA USDT: {agent_reason} | Preço: {current_price:.2f} | Qtd: {qty_usdt:.2f}"
+                    log_msg = f"[{timestamp}] COMPRA USDT: {agent_reason} | Preco: {current_price:.2f} | Qtd: {qty_usdt:.2f}"
                     self.history_log.insert(0, log_msg)
                     self.async_log(self.log_file, log_msg)
                     self.save_balance(); self.save_state()
@@ -321,7 +322,7 @@ class MulticoreMasterBot:
                             print(f"[USDT] Erro venda: {e}"); return display_lines
                     
                     self.balance += amount_to_receive * (1 - self.fee_rate)
-                    log_msg = f"[{timestamp}] VENDA USDT: {agent_reason} | Preço: {current_price:.2f} | BRL Recup: {amount_to_receive:.2f}"
+                    log_msg = f"[{timestamp}] VENDA USDT: {agent_reason} | Preco: {current_price:.2f} | BRL Recup: {amount_to_receive:.2f}"
                     self.usdt_balance = 0.0
                     self.history_log.insert(0, log_msg)
                     self.async_log(self.log_file, log_msg)
@@ -329,7 +330,7 @@ class MulticoreMasterBot:
 
         # Dashboard Lines
         sig_icon = "+" if signal == 1 else ("-" if signal == -1 else ".")
-        display_lines.append(f"| [USDT/BRL] Preço: {current_price:5.2f} | RSI: {rsi_usdt:4.1f} | Saldo: {self.usdt_balance:8.2f} USDT |")
+        display_lines.append(f"| [USDT/BRL] Preco: {current_price:5.2f} | RSI: {rsi_usdt:4.1f} | Saldo: {self.usdt_balance:8.2f} USDT |")
         if decision == "APPROVE" or confidence > 0.4:
             display_lines.append(f"|    {sig_icon} Sinal: {reason[:30]:30} | Status: {decision:8} |")
         
@@ -338,9 +339,9 @@ class MulticoreMasterBot:
     def _process_xaut(self, timestamp: str) -> list:
         display_lines = []
 
-        # 1. Busca estoque de BTC disponível do ALPHA (BTCBRL)
+        # 1. Busca estoque de BTC disponivel do ALPHA (BTCBRL)
         with self.pos_lock:
-            # Pega a lista de BTC de todas as posições abertas de BTCBRL
+            # Pega a lista de BTC de todas as posicoes abertas de BTCBRL
             btc_pos_list = self.positions.get('BTCBRL', [])
             if not isinstance(btc_pos_list, list):
                 # Retrocompatibilidade: se for dict unico, converte para lista
@@ -348,14 +349,14 @@ class MulticoreMasterBot:
                 self.positions['BTCBRL'] = btc_pos_list
             
             total_btc_holdings = sum(p['qty'] for p in btc_pos_list)
-            # Reservamos o BTC que já está em XAUT (não podemos gastar 2x)
+            # Reservamos o BTC que ja esta em XAUT (nao podemos gastar 2x)
             btc_in_xaut = sum(p['cost_btc'] for p in self.xaut_positions)
             available_btc = total_btc_holdings - btc_in_xaut
 
         # 2. Busca dados do ratio
         df_xaut = self.engine.fetch_xaut_ratio(limit=300)
         if df_xaut.empty:
-            display_lines.append("| [XAUT/BTC] Sem dados disponíveis — aguardando...            |")
+            display_lines.append("| [XAUT/BTC] Sem dados disponiveis — aguardando...            |")
             return display_lines
 
         last_row      = df_xaut.iloc[-1]
@@ -368,7 +369,7 @@ class MulticoreMasterBot:
         closed_this_cycle = []
 
         with self.xaut_lock:
-            # ── 2. Gerenciar posições abertas ────────────────────────────
+            # ── 2. Gerenciar posicoes abertas ────────────────────────────
             remaining = []
             for pos in self.xaut_positions:
                 pos['current_ratio'] = current_ratio
@@ -378,7 +379,7 @@ class MulticoreMasterBot:
                 exit_reason = None
                 if pnl_pct >= self.xaut_tp_pct:
                     exit_reason = "TAKE PROFIT"
-        # 3. Gerenciamento de Posições (Saídas em BTC)
+        # 3. Gerenciamento de Posicoes (Saidas em BTC)
         closed_this_cycle = []
         with self.xaut_lock:
             remaining = []
@@ -390,7 +391,7 @@ class MulticoreMasterBot:
                 elif pnl_pct <= -self.xaut_sl_pct: exit_reason = "STOP LOSS"
 
                 if exit_reason:
-                    # Calcula PnL líquido (taxa estimada 0.2%)
+                    # Calcula PnL liquido (taxa estimada 0.2%)
                     fee_btc = pos['cost_btc'] * 0.002
                     recovered_btc = (pos['xaut_qty'] * current_ratio) - fee_btc
                     net_pnl_btc = recovered_btc - pos['cost_btc']
@@ -407,11 +408,11 @@ class MulticoreMasterBot:
                     remaining.append(pos)
             self.xaut_positions = remaining
 
-        # 4. Abertura de Novas Posições (Vendas de BTC -> XAUT)
-        # (Signal, confidence e reason já foram calculados acima na linha 285)
+        # 4. Abertura de Novas Posicoes (Vendas de BTC -> XAUT)
+        # (Signal, confidence e reason ja foram calculados acima na linha 285)
         
         # Tamanho fixo de aporte de BTC (aprox R$ 333 por slot se R$ 1000 total)
-        # 0.0009 BTC é o valor real solicitado (3 posições de 0.0009 = 0.0027 BTC)
+        # 0.0009 BTC e o valor real solicitado (3 posicoes de 0.0009 = 0.0027 BTC)
         trade_size_btc = 0.0009
 
         can_open = (
@@ -446,7 +447,7 @@ class MulticoreMasterBot:
                 self.async_log(self.log_file, log_entry)
                 self.save_state()
 
-        # Recortar histórico de display
+        # Recortar historico de display
         self.xaut_history = self.xaut_history[:5]
 
         # ── 4. Montar linhas de display ──────────────────────────────────
@@ -524,7 +525,7 @@ class MulticoreMasterBot:
                     self.balance = self.get_real_balance('BRL')
                     self.usdt_balance = self.get_real_balance('USDT')
                 
-                # 1. Calculo de Equity Total (Saldo + Valor de Mercado de todas as posições)
+                # 1. Calculo de Equity Total (Saldo + Valor de Mercado de todas as posicoes)
                 total_equity = self.balance
                 # Add USDT value to equity
                 try:

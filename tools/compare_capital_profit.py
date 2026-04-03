@@ -1,14 +1,15 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 from datetime import datetime, timedelta
 
 def compare_scenarios():
-    # Capital de referência: 1 BTC
+    # Capital de referencia: 1 BTC
     capital_btc = 1.0
     
-    # Preço Spot Médio (R$)
+    # Preco Spot Medio (R$)
     spot_brl = 388000
     
-    # Dados extraídos do mercado real vs cenário teórico de 8%
+    # Dados extraidos do mercado real vs cenario teorico de 8%
     scenarios = [
         {
             "Nome": "🎯 Curto Prazo (Real)",
@@ -17,13 +18,13 @@ def compare_scenarios():
             "Contrato": "BTCUSD_260327"
         },
         {
-            "Nome": "🛡️ Longo Prazo (Cofre 8%)",
+            "Nome": "🛡 Longo Prazo (Cofre 8%)",
             "Yield Anual (%)": 8.00,
             "Dias para Vencimento": 102, # Exemplo Junho
             "Contrato": "BTCUSD_260626"
         },
         {
-            "Nome": "💎 Máxima Eficiência",
+            "Nome": "💎 Maxima Eficiencia",
             "Yield Anual (%)": 12.00,
             "Dias para Vencimento": 284, # Dezembro
             "Contrato": "BTCUSD_251226"
@@ -38,15 +39,15 @@ def compare_scenarios():
         # Lucro Bruto em Reais (estimado)
         lucro_brl = spot_brl * roi_abs
         
-        # Lucro por Dia (Eficiência Diária)
+        # Lucro por Dia (Eficiencia Diaria)
         lucro_diario = lucro_brl / s['Dias para Vencimento']
         
         results.append({
-            "Estratégia": s['Nome'],
+            "Estrategia": s['Nome'],
             "Yield a.a.": f"{s['Yield Anual (%)']}%",
             "Dias": s['Dias para Vencimento'],
             "Lucro/BTC (R$)": f"R$ {lucro_brl:.2f}",
-            "Eficiência Diária": f"R$ {lucro_diario:.2f}/dia"
+            "Eficiencia Diaria": f"R$ {lucro_diario:.2f}/dia"
         })
         
     df = pd.DataFrame(results)
@@ -57,13 +58,13 @@ def compare_scenarios():
     print(df.to_string(index=False))
     print("="*70)
     
-    print("\n💡 ANÁLISE TÁTICA:")
-    print("1. O cenário de 4% paga menos 'no bolso' agora (R$ 472), mas libera o capital em 11 dias.")
-    print("2. O cenário de 8% trava o capital por 100+ dias para ganhar R$ 8.6k.")
-    print("3. CUSTO DE OPORTUNIDADE: Se você fizer 10 ciclos de 11 dias a 4% (110 dias),")
-    print("   você ganharia ~R$ 4,720, o que ainda é MENOS que um único ciclo de 8% longo.")
-    print("4. CONCLUSÃO: O yield de 8% é matematicamente superior no 'fio do bigode' (lucro real),")
-    print("   mas o de 4% é imbatível para quem quer liquidez rápida.")
+    print("\n💡 ANALISE TATICA:")
+    print("1. O cenario de 4% paga menos 'no bolso' agora (R$ 472), mas libera o capital em 11 dias.")
+    print("2. O cenario de 8% trava o capital por 100+ dias para ganhar R$ 8.6k.")
+    print("3. CUSTO DE OPORTUNIDADE: Se voce fizer 10 ciclos de 11 dias a 4% (110 dias),")
+    print("   voce ganharia ~R$ 4,720, o que ainda e MENOS que um unico ciclo de 8% longo.")
+    print("4. CONCLUSAO: O yield de 8% e matematicamente superior no 'fio do bigode' (lucro real),")
+    print("   mas o de 4% e imbativel para quem quer liquidez rapida.")
     print("="*70 + "\n")
 
 if __name__ == "__main__":

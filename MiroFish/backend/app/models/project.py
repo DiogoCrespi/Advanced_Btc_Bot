@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 项目上下文管理
 用于在服务端持久化项目状态，避免前端在接口间传递大量数据

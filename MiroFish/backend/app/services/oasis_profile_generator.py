@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 OASIS Agent Profile生成器
 将Zep图谱中的实体转换为OASIS模拟平台所需的Agent Profile格式

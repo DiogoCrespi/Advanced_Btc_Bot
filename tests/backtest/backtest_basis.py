@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from basis_logic import BasisLogic
 from risk_manager import RiskManager
@@ -51,7 +52,7 @@ class BasisBacktester:
         print(f"Annualized Yield: {annual_yield*100:.2f}%")
 
         # 4. Holder Phase & Expiry
-        # No Cash & Carry clássico, seguramos até o vencimento.
+        # No Cash & Carry classico, seguramos ate o vencimento.
         # No vencimento: Future_Price == Spot_Price
         exit_price_spot = combined['Close_spot'].values[-1]
         exit_price_fut = combined['Close_fut'].values[-1]
@@ -61,18 +62,18 @@ class BasisBacktester:
         spot_return = (exit_price_spot - entry_price_spot) / entry_price_spot
         
         # P&L Future (Short COIN-M Inverse): Qty_USD * (1/Entry - 1/Exit)
-        # Assumimos alocação total
+        # Assumimos alocacao total
         qty_usd = self.balance_usd
         # PnL do short em BTC
         pnl_btc = self.risk.calculate_coin_m_pnl(entry_price_fut, exit_price_fut, qty_usd)
         
         # Resultado Final
         # Valor do Spot em BTC no final: (Entry_Value_USD * (1 + spot_return)) / Exit_Price_Spot
-        # MAS, como o nosso colateral è o próprio BTC, o valor dele em USD acompanhou o mercado.
+        # MAS, como o nosso colateral e o proprio BTC, o valor dele em USD acompanhou o mercado.
         final_balance_usd = self.balance_usd * (entry_price_fut / entry_price_spot)
         
-        # Na verdade, a matemática simplificada do Cash e Carry:
-        # Você ganha a diferença exata (o prêmio) que travou no começo.
+        # Na verdade, a matematica simplificada do Cash e Carry:
+        # Voce ganha a diferenca exata (o premio) que travou no comeco.
         locked_profit_usd = (entry_price_fut - entry_price_spot) * (qty_usd / entry_price_spot)
         
         final_balance_audited = self.balance_usd + locked_profit_usd

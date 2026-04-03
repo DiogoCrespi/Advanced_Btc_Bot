@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 import requests
 
@@ -16,7 +17,7 @@ logic = BasisLogic()
 results = []
 for c in contracts:
     symbol = c['symbol']
-    # Pegar preços
+    # Pegar precos
     data = engine.fetch_basis_data(spot_symbol="BTCUSDT", delivery_symbol=symbol)
     if data:
         expiry = logic.parse_expiry(symbol)

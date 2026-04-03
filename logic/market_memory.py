@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import os
 from datetime import datetime
 from neo4j import GraphDatabase
@@ -7,8 +8,8 @@ load_dotenv()
 
 class MarketMemory:
     """
-    Memória de Mercado via Neo4j (Grafo).
-    Armazena e recupera a relação entre Eventos Macro e Reações de Preço.
+    Memoria de Mercado via Neo4j (Grafo).
+    Armazena e recupera a relacao entre Eventos Macro e Reacoes de Preco.
     Inspirado na arquitetura de agentes 'Long-term Memory' do @redamon.
     """
 
@@ -31,7 +32,7 @@ class MarketMemory:
     def _initialize_schema(self):
         """
         Garante que os Labels e Relationships existam no banco para evitar warnings.
-        Cria e remove um conjunto mínimo de dados.
+        Cria e remove um conjunto minimo de dados.
         """
         if not self.driver: return
         query = """
@@ -58,13 +59,13 @@ class MarketMemory:
 
     def record_context_and_decision(self, news_sentiment: float, macro_risk: float, decision: str):
         """
-        Cria um snapshot do contexto atual e da decisão tomada.
+        Cria um snapshot do contexto atual e da decisao tomada.
         """
         if not self.driver: return
         
         timestamp = datetime.now().isoformat()
         
-        # Cypher: Cria nós de Evento, Macro e Decisão com vínculos
+        # Cypher: Cria nos de Evento, Macro e Decisao com vinculos
         query = """
         CREATE (e:Event {sentiment: $sentiment, timestamp: $ts})
         CREATE (m:MacroState {risk_score: $risk, timestamp: $ts})
@@ -81,7 +82,7 @@ class MarketMemory:
 
     def get_historical_conviction(self, current_sentiment: float, current_risk: float, tolerance: float = 0.2):
         """
-        Consulta o Grafo por situações similares e retorna o PnL médio.
+        Consulta o Grafo por situacoes similares e retorna o PnL medio.
         """
         if not self.driver: return 0.5 # Neutro 
         
@@ -101,12 +102,12 @@ class MarketMemory:
                     return 0.5 + (avg_pnl * 5.0) # Normaliza PnL para Conviction Score
                 return 0.5
         except Exception as e:
-            print(f"[MEMORY] Erro ao consultar histórico: {e}")
+            print(f"[MEMORY] Erro ao consultar historico: {e}")
             return 0.5
 
     def record_outcome(self, pnl: float):
         """
-        Vincula o resultado financeiro à última decisão tomada.
+        Vincula o resultado financeiro a ultima decisao tomada.
         """
         if not self.driver: return
         
@@ -125,7 +126,7 @@ class MarketMemory:
 
 if __name__ == "__main__":
     memory = MarketMemory()
-    # Teste de gravação
+    # Teste de gravacao
     memory.record_context_and_decision(0.8, 0.4, "APPROVE")
     # Teste de consulta
     conv = memory.get_historical_conviction(0.75, 0.45)

@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 from logic.macro_radar import MacroRadar
 from logic.strategist_agent import StrategistAgent
@@ -12,16 +13,16 @@ def test_macro_radar_risk_off():
 
 def test_strategist_agent_block_longs_on_high_risk():
     agent = StrategistAgent()
-    # Caso de Risco Altíssimo
+    # Caso de Risco Altissimo
     macro_data = {'dxy_change': 0.05, 'sp500_change': -0.05}
     signals = {'tier1': 0.1, 'tier2': 1} # Tier 2 quer comprar muito
     
     res = agent.run(signals, macro_data)
     
-    # O agente deve ter reduzido o Tier 2 ou mudado a decisão
+    # O agente deve ter reduzido o Tier 2 ou mudado a decisao
     assert res['risk_score'] < 0.3
-    # Verificamos se houve menção a Risco Sistêmico no reasoning
-    assert any("Risco Sistêmico" in r or "Decision: WAIT" in r or res['decision'] != "EXECUTE_ALPHA" for r in res['reasoning'])
+    # Verificamos se houve mencao a Risco Sistemico no reasoning
+    assert any("Risco Sistemico" in r or "Decision: WAIT" in r or res['decision'] != "EXECUTE_ALPHA" for r in res['reasoning'])
 
 def test_strategist_assess_trade_logic():
     agent = StrategistAgent()

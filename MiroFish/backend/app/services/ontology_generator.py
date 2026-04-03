@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 本体生成服务
 接口1：分析文本内容，生成适合社会模拟的实体和关系类型定义

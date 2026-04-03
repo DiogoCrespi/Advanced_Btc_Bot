@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 import numpy as np
 import time
@@ -29,7 +30,7 @@ class TimeMachineSimulator:
         self.wins = 0
 
     def fetch_long_history(self):
-        print(f"⏳ Buscando histórico para {self.asset} (1h)...")
+        print(f"⏳ Buscando historico para {self.asset} (1h)...")
         try:
             # We'll use 1 year of data for a more focused backtest (faster training blocks)
             df = yf.download(self.asset, period="1y", interval="1h")
@@ -58,7 +59,7 @@ class TimeMachineSimulator:
         total_len = len(df)
         start_idx = self.window_train
         
-        print(f"\n🚀 SIMULAÇÃO OTIMIZADA (SL: 1.5%, TP: 3.0%, Conf: 70%)\n")
+        print(f"\n🚀 SIMULACAO OTIMIZADA (SL: 1.5%, TP: 3.0%, Conf: 70%)\n")
         
         for i in range(start_idx, total_len - self.window_test, self.window_test):
             train_segment = df.iloc[i - self.window_train : i]
@@ -107,13 +108,13 @@ class TimeMachineSimulator:
                     self.equity_curve.append(self.equity)
             
             progress = (i / total_len) * 100
-            print(f"🕒 [{progress:4.1f}%] Patrimônio: {self.equity:.4f} | WinRate: {(self.wins/self.trades if self.trades>0 else 0):.1%}")
+            print(f"🕒 [{progress:4.1f}%] Patrimonio: {self.equity:.4f} | WinRate: {(self.wins/self.trades if self.trades>0 else 0):.1%}")
             
         self.finish_report()
 
     def finish_report(self):
         print(f"\n{'═'*50}")
-        print(f"🏁 FIM DA SIMULAÇÃO (MÁQUINA DO TEMPO)")
+        print(f"🏁 FIM DA SIMULACAO (MAQUINA DO TEMPO)")
         print(f"{'═'*50}")
         print(f"📈 Retorno Total: {(self.equity - 1)*100:.2f}%")
         print(f"📊 Total de Trades: {self.trades}")

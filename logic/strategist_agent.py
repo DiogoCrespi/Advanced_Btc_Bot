@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import json
 import os
 from typing import Dict, List, TypedDict
@@ -16,8 +17,8 @@ class StrategistState(TypedDict):
 
 class StrategistAgent:
     """
-    Orquestrador Agêntico (LangGraph) que decide a estratégia global do bot.
-    Inspirado na arquitetura flexível do @redamon.
+    Orquestrador Agentico (LangGraph) que decide a estrategia global do bot.
+    Inspirado na arquitetura flexivel do @redamon.
     """
 
     def __init__(self):
@@ -61,18 +62,18 @@ class StrategistAgent:
         return state
 
     def _node_triage_signals(self, state: StrategistState):
-        # Se o risco for altíssimo, ignorar sinais direcionais (Tier 2/3)
+        # Se o risco for altissimo, ignorar sinais direcionais (Tier 2/3)
         if state['risk_score'] < 0.25:
-            state['reasoning'].append("⚠️ Risco Sistêmico: Ignorando sinais de Alpha Direcional.")
-            state['signals']['tier2'] = 0 # Neutro por segurança
-            state['signals']['tier3'] = 0 # Neutro por segurança
+            state['reasoning'].append("⚠ Risco Sistemico: Ignorando sinais de Alpha Direcional.")
+            state['signals']['tier2'] = 0 # Neutro por seguranca
+            state['signals']['tier3'] = 0 # Neutro por seguranca
         return state
 
     def _node_make_decision(self, state: StrategistState):
         mult, msg = self.radar.get_recommended_position_mult()
         state['allocation_mult'] = mult
         
-        # Lógica de decisão
+        # Logica de decisao
         if state['signals'].get('tier2', 0) != 0:
             state['decision'] = "EXECUTE_ALPHA"
         elif state['signals'].get('tier1', 0) > 0.05:
@@ -80,7 +81,7 @@ class StrategistAgent:
         else:
             state['decision'] = "WAIT"
             
-        # Gravar na Memória de Mercado (Neo4j)
+        # Gravar na Memoria de Mercado (Neo4j)
         md = state['macro_data']
         self.memory.record_context_and_decision(
             md.get('news_sentiment', 0.0), 
@@ -88,12 +89,12 @@ class StrategistAgent:
             state['decision']
         )
             
-        state['reasoning'].append(f"Decisão: {state['decision']} | Multiplicador: {mult} ({msg})")
+        state['reasoning'].append(f"Decisao: {state['decision']} | Multiplicador: {mult} ({msg})")
         return state
 
     def assess_trade(self, asset: str, signal: int, probability: float, reason: str):
         """
-        Avalia um trade específico com base na probabilidade do ML e contexto macro.
+        Avalia um trade especifico com base na probabilidade do ML e contexto macro.
         Retorna: (decision, reason, modifiers)
         """
         modifiers = {
@@ -106,10 +107,10 @@ class StrategistAgent:
         if probability < 0.60:
             return "REJECT", f"Probabilidade insuficiente ({probability:.2f})", modifiers
             
-        # 2. Ajuste por Convicção
+        # 2. Ajuste por Conviccao
         if probability > 0.80:
             modifiers['size_mult'] *= 1.2
-            modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta convicção
+            modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta conviccao
             
         # 3. Filtro Macro (acesso direto ao radar)
         if self.radar.risk_score < 0.3 and signal == 1:

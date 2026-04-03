@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pandas as pd
 import numpy as np
 
@@ -8,19 +9,19 @@ class StatArbLogic:
 
     def calculate_zscore(self, df_btc, df_eth):
         """
-        Calcula o Spread logarítmico ajustado pela Regressão Linear (Beta).
+        Calcula o Spread logaritmico ajustado pela Regressao Linear (Beta).
         """
         df, _ = df_btc.align(df_eth, join='inner', axis=0)
         
         log_btc = np.log(df_btc['close'])
         log_eth = np.log(df_eth['close'])
         
-        # Cálculo do Hedge Ratio (Beta) via Rolagem: Covariância / Variância
+        # Calculo do Hedge Ratio (Beta) via Rolagem: Covariancia / Variancia
         cov = log_btc.rolling(window=self.window).cov(log_eth)
         var = log_eth.rolling(window=self.window).var()
         beta = cov / var
         
-        # O Spread Real (Resíduo da cointegração)
+        # O Spread Real (Residuo da cointegracao)
         spread = log_btc - (beta * log_eth)
         
         spread_mean = spread.rolling(window=self.window).mean()
@@ -32,10 +33,10 @@ class StatArbLogic:
 
     def is_spread_profitable(self, z_score, spread_current, spread_mean, fee_total=0.002):
         """
-        Garante que a reversão esperada (Spread atual até a média)
-        é maior do que o custo total das taxas (aprox 0.2% a 0.4%).
+        Garante que a reversao esperada (Spread atual ate a media)
+        e maior do que o custo total das taxas (aprox 0.2% a 0.4%).
         """
-        if abs(z_score) > 4.0: # Z-Stop: Se o desvio for extremo, a cointegração quebrou
+        if abs(z_score) > 4.0: # Z-Stop: Se o desvio for extremo, a cointegracao quebrou
             return False
         expected_profit_margin = abs(spread_current - spread_mean)
         return expected_profit_margin > fee_total
@@ -48,14 +49,14 @@ class StatArbLogic:
             return None
             
         if current_z_score > self.z_threshold:
-            # Spread demasiado alto (BTC está caro em relação ao ETH)
+            # Spread demasiado alto (BTC esta caro em relacao ao ETH)
             # Sinal: SHORT BTC, LONG ETH
             return -1 
         elif current_z_score < -self.z_threshold:
-            # Spread demasiado baixo (BTC está barato em relação ao ETH)
+            # Spread demasiado baixo (BTC esta barato em relacao ao ETH)
             # Sinal: LONG BTC, SHORT ETH
             return 1
         elif abs(current_z_score) < 0.1:
-            # Reversão à média (Fechar posições)
+            # Reversao a media (Fechar posicoes)
             return 0
         return None

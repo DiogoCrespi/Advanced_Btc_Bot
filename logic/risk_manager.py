@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 class RiskManager:
     def __init__(self, initial_balance=10000):
         self.initial_balance = initial_balance
@@ -7,7 +8,7 @@ class RiskManager:
 
     def calculate_pair_position(self, btc_price, eth_price, risk_fraction=0.10):
         """
-        Aloca uma fração do capital total para o trade de pares (50/50 entre ativos).
+        Aloca uma fracao do capital total para o trade de pares (50/50 entre ativos).
         Isto garante neutralidade ao mercado (Hedge).
         """
         trade_capital = self.balance * risk_fraction
@@ -20,7 +21,7 @@ class RiskManager:
 
     def calculate_pnl_with_fees(self, entry_price, exit_price, qty, is_short=False):
         """
-        Simulando a execução via Limit Orders (Maker Fee).
+        Simulando a execucao via Limit Orders (Maker Fee).
         Vamos assumir a taxa VIP 0/Promocional para Maker (0.05%)
         """
         fee_rate = 0.0005 # 0.05% por ordem executada no book
@@ -46,12 +47,12 @@ class RiskManager:
 
     def check_liquidation_risk(self, entry_price, current_price, leverage=1.0):
         """
-        Monitora o risco de liquidação da perna Short.
+        Monitora o risco de liquidacao da perna Short.
         """
-        # COIN-M (Inverse) Short 1x: O risco de liquidação é matematicamente zero 
-        # porque o valor do colateral (BTC) sobe junto com o prejuízo do Short.
+        # COIN-M (Inverse) Short 1x: O risco de liquidacao e matematicamente zero 
+        # porque o valor do colateral (BTC) sobe junto com o prejuizo do Short.
         if leverage <= 1.0:
-            return 1.0, 999999999 # Distância infinita, Preço de liq inalcançável
+            return 1.0, 999999999 # Distancia infinita, Preco de liq inalcancavel
             
         liquidation_price = entry_price * (leverage / (leverage - 1))
         distance = (liquidation_price - current_price) / current_price
@@ -69,7 +70,7 @@ class RiskManager:
 
     def rebalance_margin(self, spot_balance, futures_margin, threshold=0.10):
         """
-        Transfere lucro do Spot para Futuros para afastar a liquidação.
+        Transfere lucro do Spot para Futuros para afastar a liquidacao.
         """
         if spot_balance > futures_margin * (1 + threshold):
             transfer = (spot_balance - futures_margin) / 2

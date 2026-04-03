@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 动作日志记录器
 用于记录OASIS模拟中每个Agent的动作，供后端监控使用

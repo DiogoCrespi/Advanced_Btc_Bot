@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import pandas as pd
 import numpy as np
@@ -5,7 +6,7 @@ from datetime import datetime, timedelta
 import sys
 import os
 
-# Adiciona o diretório 'logic' ao path
+# Adiciona o diretorio 'logic' ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
 from gap_logic import GapLogic
 
@@ -32,14 +33,14 @@ def test_cme_gap_simulation():
     
     df_feat = logic.detect_cme_gaps(df)
     
-    # Verifica o tamanho do gap no índice 50
+    # Verifica o tamanho do gap no indice 50
     assert df_feat['gap_size'].iloc[50] > 0.08
     assert df_feat['gap_size'].iloc[50] < 0.09
 
 def test_fvg_magnet_effect():
     """
-    Verifica se a detecção de FVG gera um alvo (target) de liquidez coerente.
-    Bullish FVG: O preço deve 'voltar' para preencher a lacuna.
+    Verifica se a deteccao de FVG gera um alvo (target) de liquidez coerente.
+    Bullish FVG: O preco deve 'voltar' para preencher a lacuna.
     """
     logic = GapLogic()
     

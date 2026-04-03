@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -16,7 +17,7 @@ class DataEngine:
 
     def fetch_delivery_klines(self, symbol, interval="1h", limit=1000):
         """
-        Busca klines históricos de um contrato de entrega.
+        Busca klines historicos de um contrato de entrega.
         """
         print(f"Fetching Delivery klines for {symbol}...")
         try:
@@ -98,12 +99,12 @@ class DataEngine:
 
     def fetch_funding_history(self, symbol="BTCUSDT", startTime=None, limit=1000):
         """
-        Busca o histórico de Funding Rates da Binance Futures de forma paginada para obter mais dados.
+        Busca o historico de Funding Rates da Binance Futures de forma paginada para obter mais dados.
         """
         all_funding = []
         current_start = startTime
         
-        # Binance permite buscar blocos de 1000. Vamos tentar buscar até 5 blocos (5000 records ~ 4.5 anos)
+        # Binance permite buscar blocos de 1000. Vamos tentar buscar ate 5 blocos (5000 records ~ 4.5 anos)
         for _ in range(5):
             print(f"Fetching funding batch for {symbol} (start: {current_start})...")
             params = {"symbol": symbol, "limit": 1000}
@@ -119,7 +120,7 @@ class DataEngine:
                 df_batch = pd.DataFrame(data)
                 all_funding.append(df_batch)
                 
-                # Para paginar: o próximo startTime é o tempo do último record + 1ms
+                # Para paginar: o proximo startTime e o tempo do ultimo record + 1ms
                 current_start = int(df_batch['fundingTime'].values[-1]) + 1
             except Exception as e:
                 print(f"Exception fetching funding batch: {e}")
@@ -256,11 +257,11 @@ class DataEngine:
     def fetch_xaut_ratio(self, limit: int = 300) -> pd.DataFrame:
         """
         Busca o ratio XAUT/BTC (via par XAUTBTC na Binance Spot) e retorna
-        um DataFrame com indicadores técnicos calculados pelo XAUTAnalyzer.
+        um DataFrame com indicadores tecnicos calculados pelo XAUTAnalyzer.
 
-        Parâmetros
+        Parametros
         ----------
-        limit : número de velas horárias (default 300 = ~12,5 dias)
+        limit : numero de velas horarias (default 300 = ~12,5 dias)
 
         Retorna
         -------
@@ -285,7 +286,7 @@ class DataEngine:
 
     def fetch_usdt_brl_data(self, limit: int = 300) -> pd.DataFrame:
         """
-        Busca dados de USDTBRL e aplica indicadores técnicos.
+        Busca dados de USDTBRL e aplica indicadores tecnicos.
         """
         df_raw = self.fetch_binance_klines("USDTBRL", interval="1h", limit=limit)
         if df_raw.empty:

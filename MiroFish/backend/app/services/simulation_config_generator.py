@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 """
 模拟配置智能生成器
 使用LLM根据模拟需求、文档内容、图谱信息自动生成细致的模拟参数

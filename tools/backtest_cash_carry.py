@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from funding_logic import FundingLogic
 from risk_manager import RiskManager
@@ -59,7 +60,7 @@ class CashCarryBacktester:
 
             # ENTRY
             if self.active_position is None and signal == 1:
-                # Alocação 50/50: Metade Spot, Metade Short Futuros
+                # Alocacao 50/50: Metade Spot, Metade Short Futuros
                 pos_value = self.balance / 2
                 qty_spot = pos_value / price
                 qty_fut = qty_spot # Hedge 1:1
@@ -77,7 +78,7 @@ class CashCarryBacktester:
             if self.active_position:
                 # Receive/Pay Funding
                 # P&L = Position Size * Funding Rate
-                # Note: Funding na Binance è pago pelo Long para o Short se taxa > 0.
+                # Note: Funding na Binance e pago pelo Long para o Short se taxa > 0.
                 # Como somos SHORT, recebemos funding positivo.
                 funding_pnl = self.active_position['qty'] * price * funding_rate
                 self.balance += funding_pnl
@@ -85,8 +86,8 @@ class CashCarryBacktester:
                 # Check Liquidation / Rebalance
                 dist, liq_p = self.risk.check_liquidation_risk(self.active_position['entry_price'], price)
                 if dist < 0.15: # Risco se < 15%
-                    # Simulação de Margem: No backtest simplificado, apenas registramos o alerta
-                    # Em prod, moveríamos fundos do Spot para Futuros.
+                    # Simulacao de Margem: No backtest simplificado, apenas registramos o alerta
+                    # Em prod, moveriamos fundos do Spot para Futuros.
                     pass
 
                 # EXIT

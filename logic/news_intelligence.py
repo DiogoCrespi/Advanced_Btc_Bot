@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import os
 import requests
 import json
@@ -8,15 +9,15 @@ load_dotenv()
 
 class NewsIntelligence:
     """
-    Agente de Inteligência de Notícias (Inspirado no @worldmonitor).
-    Coleta notícias do mercado cripto e macro para gerar um 'Sentiment Score'.
+    Agente de Inteligencia de Noticias (Inspirado no @worldmonitor).
+    Coleta noticias do mercado cripto e macro para gerar um 'Sentiment Score'.
     """
 
     def __init__(self):
         self.newsapi_key = os.getenv("NEWSAPI_KEY")
         self.tavily_key = os.getenv("TAVILY_KEY")
         
-        # Léxico básico de sentimento (Heurística rápida)
+        # Lexico basico de sentimento (Heuristica rapida)
         self.bullish_keywords = [
             "bullish", "rally", "growth", "all-time high", "etf approval", 
             "adoption", "moon", "pumping", "support", "breakout", "accumulating",
@@ -30,14 +31,14 @@ class NewsIntelligence:
 
     def fetch_btc_news(self):
         """
-        Busca notícias recentes de BTC e Macro via NewsAPI com fallback para Tavily.
+        Busca noticias recentes de BTC e Macro via NewsAPI com fallback para Tavily.
         """
         print("[NOTICIAS] Coletando manchetes do mercado...")
         headlines = []
         
         if self.newsapi_key:
             try:
-                # Busca notícias das últimas 24h
+                # Busca noticias das ultimas 24h
                 yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
                 url = f"https://newsapi.org/v2/everything?q=bitcoin+OR+crypto+OR+fed+OR+inflation&from={yesterday}&sortBy=publishedAt&language=en&apiKey={self.newsapi_key}"
                 res = requests.get(url, timeout=10)
@@ -70,7 +71,7 @@ class NewsIntelligence:
     def get_sentiment_score(self):
         """
         Calcula o sentiment score baseado em palavras-chave.
-        Retorno: -1.0 (Extremo Medo) a 1.0 (Extrema Ganância)
+        Retorno: -1.0 (Extremo Medo) a 1.0 (Extrema Ganancia)
         """
         headlines = self.fetch_btc_news()
         if not headlines:

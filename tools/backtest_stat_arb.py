@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 from data_engine import DataEngine
 from stat_arb_logic import StatArbLogic
 from risk_manager import RiskManager
@@ -62,17 +63,17 @@ class StatArbBacktester:
             
             # 1. Manage Active Position
             if self.active_trade is not None:
-                # Saída por Reversão à Média
+                # Saida por Reversao a Media
                 if signal == 0:
                     self.close_trade(p_btc, p_eth, time, "Take Profit")
-                # Saída por Z-Stop (Quebra de Cointegração)
+                # Saida por Z-Stop (Quebra de Cointegracao)
                 elif abs(z) > 4.0:
                     self.close_trade(p_btc, p_eth, time, "Z-Stop Limit")
 
             # 2. Open Position (Deviation)
             elif self.active_trade is None and signal is not None and signal != 0:
                 if self.logic.is_spread_profitable(z, s_curr, s_mean):
-                    # Alocação calibrada: 25% do capital (Equilíbrio entre ROI e Fee Drag)
+                    # Alocacao calibrada: 25% do capital (Equilibrio entre ROI e Fee Drag)
                     qty_btc, _ = self.risk.calculate_pair_position(p_btc, p_eth, risk_fraction=0.25)
                     
                     adjusted_qty_eth = (qty_btc * p_btc * beta) / p_eth

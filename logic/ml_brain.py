@@ -1,3 +1,4 @@
+# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -6,7 +7,7 @@ from sklearn.metrics import classification_report
 class MLBrain:
     """
     Random Forest Classifier to predict BTC price moves based on technical indicators.
-    Focado em detectar anomalias de mercado e ineficiências em múltiplos Tiers.
+    Focado em detectar anomalias de mercado e ineficiencias em multiplos Tiers.
     """
     def __init__(self, n_estimators=200, random_state=42):
         self.model = RandomForestClassifier(
@@ -14,7 +15,7 @@ class MLBrain:
             max_depth=12,
             min_samples_leaf=10,
             random_state=random_state,
-            class_weight='balanced' # Lida com o desequilíbrio de classes (Neutro é mais comum)
+            class_weight='balanced' # Lida com o desequilibrio de classes (Neutro e mais comum)
         )
         self.is_trained = False
         self.feature_cols = []
@@ -25,11 +26,11 @@ class MLBrain:
         """
         df = df.copy()
         
-        # Features Distância (Relative to Price)
+        # Features Distancia (Relative to Price)
         df['feat_dist_sma50'] = (df['close'] / df['SMA_50']) - 1
         df['feat_dist_ema21'] = (df['close'] / df['EMA_21']) - 1
         
-        # Momentum e Força
+        # Momentum e Forca
         df['feat_rsi'] = df['RSI_14'] / 100
         df['feat_returns'] = df['Log_Returns']
         
@@ -40,7 +41,7 @@ class MLBrain:
         df['feat_slope_sma50'] = df['SMA_50'].diff(5) / df['SMA_50']
         df['feat_slope_ema21'] = df['EMA_21'].diff(5) / df['EMA_21']
         
-        # Order Flow Metrics (Se disponíveis)
+        # Order Flow Metrics (Se disponiveis)
         df['feat_cvd_div']  = df.get('cvd_div', 0)
         df['feat_sweep_high'] = df.get('sweep_high', 0)
         df['feat_sweep_low']  = df.get('sweep_low', 0)
@@ -97,20 +98,20 @@ class MLBrain:
 
     def train(self, df, train_full=False, tp=0.015, sl=0.008, horizon=24):
         """
-        Treina o cérebro de ML com alinhamento garantido de amostras.
+        Treina o cerebro de ML com alinhamento garantido de amostras.
         """
         data = self.prepare_features(df)
         self.feature_cols = [c for c in data.columns if c.startswith('feat_')]
         X_all = data[self.feature_cols].values
         y_all = self.create_labels(data, tp=tp, sl=sl, horizon=horizon)
         
-        # Alinhamento CRÍTICO para evitar Found input variables with inconsistent numbers of samples
+        # Alinhamento CRITICO para evitar Found input variables with inconsistent numbers of samples
         min_len = min(len(X_all), len(y_all))
         X = X_all[:min_len]
         y = y_all[:min_len]
         
         if len(np.unique(y)) < 2:
-            print("⚠️ Insufficient label diversity to train ML Brain.")
+            print("⚠ Insufficient label diversity to train ML Brain.")
             return False
 
         if train_full:
@@ -138,7 +139,7 @@ class MLBrain:
 
     def predict_signal(self, current_features_row, feature_names=None, min_confidence=0.55):
         """
-        Executa predição com checks de segurança para NaN/Inf.
+        Executa predicao com checks de seguranca para NaN/Inf.
         """
         if not self.is_trained:
             return 0, 0.0, "Brain not trained"
@@ -147,7 +148,7 @@ class MLBrain:
             feature_names = self.feature_cols
             
         if len(current_features_row) != len(feature_names):
-             # Proteção extra contra mismatch de features
+             # Protecao extra contra mismatch de features
              return 0, 0.0, f"Feature mismatch: Expected {len(feature_names)}, got {len(current_features_row)}"
             
         if not np.isfinite(current_features_row).all():
@@ -161,7 +162,7 @@ class MLBrain:
         if max_prob < min_confidence:
             return 0, max_prob, f"Conviccao Baixa ({max_prob:.1%})"
         
-        # Heurísticas básicas para o 'reason'
+        # Heuristicas basicas para o 'reason'
         feats = dict(zip(feature_names, current_features_row))
         reason = "Confluencia ML"
         
