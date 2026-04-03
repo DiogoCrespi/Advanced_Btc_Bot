@@ -1,8 +1,13 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import os
+import logging
 from datetime import datetime
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
+
+# Silenciar warnings verbosos do Neo4j sobre schema
+logging.getLogger("neo4j").setLevel(logging.ERROR)
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 load_dotenv()
 
