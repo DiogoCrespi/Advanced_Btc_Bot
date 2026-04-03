@@ -38,7 +38,7 @@ class MarketMemory:
         MERGE (e:Event {id: 'schema_seed'})
         MERGE (m:MacroState {id: 'schema_seed'})
         MERGE (d:Decision {id: 'schema_seed'})
-        MERGE (o:Outcome {id: 'schema_seed', pnl: 0.0})
+        MERGE (o:Outcome {id: 'schema_seed'})
         MERGE (e)-[:HAPPENED_IN]->(m)
         MERGE (d)-[:BASED_ON]->(e)
         MERGE (o)-[:FOLLOWED]->(d)
@@ -90,6 +90,7 @@ class MarketMemory:
         WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol
         MATCH (d:Decision)-[:BASED_ON]->(e)
         OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)
+        WITH d, o WHERE o IS NULL OR o.pnl IS NOT NULL
         RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences
         """
         try:
