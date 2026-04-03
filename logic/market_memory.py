@@ -38,7 +38,7 @@ class MarketMemory:
         MERGE (e:Event {id: 'schema_seed'})
         MERGE (m:MacroState {id: 'schema_seed'})
         MERGE (d:Decision {id: 'schema_seed'})
-        MERGE (o:Outcome {id: 'schema_seed'})
+        MERGE (o:Outcome {id: 'schema_seed', pnl: 0.0})
         MERGE (e)-[:HAPPENED_IN]->(m)
         MERGE (d)-[:BASED_ON]->(e)
         MERGE (o)-[:FOLLOWED]->(d)
@@ -71,7 +71,7 @@ class MarketMemory:
         CREATE (d:Decision {action: $action, timestamp: $ts})
         MERGE (e)-[:HAPPENED_IN]->(m)
         MERGE (d)-[:BASED_ON]->(e)
-        RETURN id(d) as decision_id
+        RETURN elementId(d) as decision_id
         """
         try:
             with self.driver.session() as session:
