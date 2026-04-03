@@ -284,6 +284,40 @@ class DataEngine:
             print(f"[XAUT] Erro ao calcular features do ratio: {e}")
             return pd.DataFrame()
 
+    def fetch_forex_spread(self):
+        """
+        Calcula o Agio/Desagio Cambial (Spread) cruzando o Dolar Comercial puro (AwesomeAPI)
+        contra o spot dolar implicito na Binance (BTCBRL / BTCUSDT).
+        """
+        try:
+            aw_resp = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL", timeout=5)
+            dolar_comercial = float(aw_resp.json()['USDBRL']['bid'])
+            
+            spot_url = "https://api.binance.com/api/v3/ticker/price"
+            btc_brl_resp = requests.get(spot_url, params={"symbol": "BTCBRL"}, timeout=5).json()
+            btc_usdt_resp = requests.get(spot_url, params={"symbol": "BTCUSDT"}, timeout=5).json()
+            
+            btc_brl = float(btc_brl_resp['price'])
+            btc_usdt = float(btc_usdt_resp['price'])
+            dolar_cripto = btc_brl / btc_usdt
+            
+            spread_pct = (dolar_cripto / dolar_comercial) - 1.0
+            
+            return {
+                "dolar_comercial": dolar_comercial,
+                "dolar_cripto": dolar_cripto,
+                "agio_cambial_pct": spread_pct,
+                "valido": True
+            }
+        except Exception as e:
+            print(f"Aviso Forex Spread: {e}")
+            return {
+                "dolar_comercial": 0.0,
+                "dolar_cripto": 0.0,
+                "agio_cambial_pct": 0.0,
+                "valido": False
+            }
+
     def fetch_usdt_brl_data(self, limit: int = 300) -> pd.DataFrame:
         """
         Busca dados de USDTBRL e aplica indicadores tecnicos.

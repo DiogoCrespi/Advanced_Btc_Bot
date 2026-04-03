@@ -1,6 +1,9 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
-from data_engine import DataEngine
-from basis_logic import BasisLogic
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data.data_engine import DataEngine
+from logic.basis_logic import BasisLogic
 from datetime import datetime
 import pandas as pd
 
@@ -51,17 +54,29 @@ def run_comparison():
     print(df.to_string(index=False))
     
     print("-" * 60)
+    
+    # [MODULO CAMBIAL]
+    forex = engine.fetch_forex_spread()
+    if forex['valido']:
+        print(f"| FOREX | Dolar Comercial (PTAX): R$ {forex['dolar_comercial']:.4f}")
+        print(f"| FOREX | Dolar Cripto (Binance): R$ {forex['dolar_cripto']:.4f}")
+        print(f"| FOREX | Spread (Agio Cambial) : {forex['agio_cambial_pct']*100:+.2f}%")
+        print("-" * 60)
+        
+        if forex['agio_cambial_pct'] > 0.01:
+            print(f"ALERTA TATICO: Agio massivo detectado! O Dolar Cripto esta {forex['agio_cambial_pct']*100:.2f}% mais caro.")
+            print("RECOMENDACAO: Travar a operacao no mercado Spot BRL para extrair o spread como alpha adicional.")
+            print("-" * 60)
+            
     if brl_yield > usd_yield:
         diff = (brl_yield - usd_yield) * 100
-        print(f"VENCEDOR: MERCADO BRL (Reais) esta pagando {diff:.2f}% a mais!")
+        print(f"VENCEDOR ESTRUTURAL: MERCADO BRL (Reais) (Yield Basis: +{diff:.2f}%)")
     elif usd_yield > brl_yield:
         diff = (usd_yield - brl_yield) * 100
-        print(f"VENCEDOR: MERCADO USD (USDT) esta pagando {diff:.2f}% a mais!")
+        print(f"VENCEDOR ESTRUTURAL: MERCADO USD (USDT) (Yield Basis: +{diff:.2f}%)")
     else:
-        print("EMPATE TECNICO: Os rendimentos estao identicos.")
+        print("EMPATE TECNICO: Os rendimentos Basis estao identicos.")
         
-    if brl_data:
-        print(f"\nNota: Taxa de conversao USDT/BRL usada: {brl_data['fx_rate']:.4f}")
     print("="*60 + "\n")
 
 if __name__ == "__main__":

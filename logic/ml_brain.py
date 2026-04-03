@@ -49,6 +49,9 @@ class MLBrain:
         # Macro Risk (Novo!)
         df['feat_macro_risk'] = df.get('macro_risk', 0.5)
         
+        # Fluxo de Capital - Bitcoin Dominance (Novo!)
+        df['feat_btc_dominance'] = df.get('btc_dominance', 50.0)
+        
         # Limpeza: Dropamos NaNs (provenientes do rolling) para evitar Crash na RF
         return df.dropna()
 

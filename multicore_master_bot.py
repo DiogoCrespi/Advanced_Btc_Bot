@@ -31,6 +31,7 @@ from logic.market_memory import MarketMemory
 from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
 from logic.news_intelligence import NewsIntelligence
+from logic.coingecko_client import CoinGeckoClient
 
 # Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
@@ -116,6 +117,7 @@ class MulticoreMasterBot:
         self.agent = StrategistAgent() 
         self.news_intel = NewsIntelligence() # Global news sensor
         self.memory = MarketMemory() 
+        self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
         
         # Async I/O Logging Queue
@@ -509,6 +511,7 @@ class MulticoreMasterBot:
                 # 0. MACRO ANALYSIS (Agentic Layer)
                 macro_data = self.engine.fetch_macro_data()
                 news_sent  = self.news_intel.get_sentiment_score()
+                self.btc_dominance = self.cg_client.get_btc_dominance()
                 
                 self.macro_risk = self.agent.radar.get_macro_score(
                     macro_data.get('dxy_change', 0), 
@@ -614,6 +617,7 @@ class MulticoreMasterBot:
                         if df_ml.empty: return
                         df_ml = self.engine.apply_indicators(df_ml)
                         df_ml['macro_risk'] = self.macro_risk
+                        df_ml['btc_dominance'] = self.btc_dominance
                         
                         processed_ml = self.brains[asset].prepare_features(df_ml)
                         feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]

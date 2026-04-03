@@ -1,6 +1,9 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
-from data_engine import DataEngine
-from basis_logic import BasisLogic
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data.data_engine import DataEngine
+from logic.basis_logic import BasisLogic
 import json
 from datetime import datetime
 import os
@@ -84,6 +87,11 @@ class ScannerCofreHibrido:
         self.log_event(f"🎯 Preco Futuro:     US$ {contract['future']:.2f}")
         self.log_event(f"📈 Yield Anualizado: {contract['yield_apr']*100:.2f}% a.a.")
         self.log_event(f"📅 Data Vencimento:  {contract['expiry_date']}")
+        
+        forex = self.engine.fetch_forex_spread()
+        if forex['valido']:
+            self.log_event(f"💱 Agio Cambial BRL : {forex['agio_cambial_pct']*100:+.2f}% (Dolar Comercial: {forex['dolar_comercial']:.4f} | Cripto: {forex['dolar_cripto']:.4f})")
+        
         self.log_event(f"{'='*65}")
         
         instrucoes = {
@@ -91,6 +99,11 @@ class ScannerCofreHibrido:
             'contrato_alvo': contract['symbol'],
             'yield_anualizado_travado': round(contract['yield_apr'] * 100, 2),
             'currency_spot': contract['currency'],
+            'forex_info': {
+                'dolar_comercial': round(forex['dolar_comercial'], 4) if forex['valido'] else 0.0,
+                'dolar_cripto': round(forex['dolar_cripto'], 4) if forex['valido'] else 0.0,
+                'agio_cambial_pct': round(forex['agio_cambial_pct'] * 100, 2) if forex['valido'] else 0.0
+            },
             'passo_a_passo_execucao': [
                 "1. Abra o app/site da Binance.",
                 f"2. Compre a quantidade desejada de {self.asset} usando {contract['currency']} (Par {self.asset}/{contract['currency']}).",
