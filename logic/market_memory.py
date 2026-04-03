@@ -90,8 +90,8 @@ class MarketMemory:
         WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol
         MATCH (d:Decision)-[:BASED_ON]->(e)
         OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)
-        WITH d, o WHERE o IS NULL OR o.pnl IS NOT NULL
-        RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences
+        WITH d, o WHERE o IS NULL OR o["pnl"] IS NOT NULL
+        RETURN avg(o["pnl"]) as avg_pnl, count(d) as total_occurrences
         """
         try:
             with self.driver.session() as session:

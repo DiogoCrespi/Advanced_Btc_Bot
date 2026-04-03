@@ -1,0 +1,40 @@
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | | # LOG RECENTE:                                                        |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | Fetching Macro Data (S&P 500 & DXY)...
+btc_multicore_bot  | [NOTICIAS] Coletando manchetes do mercado...
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | | >>> ADVANCED MULTICORE BTC BOT | 18:32:30 | Equity: R$   1000.00 |
+btc_multicore_bot  | | Saldo Disponivel: R$  1000.00  | USDT:       0.00              |
+btc_multicore_bot  | | Macro Risk Score:   0.50    | Recommendation: ⚖️ Macro Neutro: Mão Padrão     |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | | [PORTFOLIO] Ativos em Carteira:                                        |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | [DEBUG] Entrando em fetch_delivery_contracts para BTC...
+btc_multicore_bot  | [DEBUG] Fazendo requests.get para https://dapi.binance.com/dapi/v1/exchangeInfo...
+btc_multicore_bot  | [DEBUG] Resposta recebida. Status: 200
+btc_multicore_bot  | [DEBUG] Saindo de fetch_delivery_contracts. Encontrados: 2
+btc_multicore_bot  | | [COFRE BRL] Melhor Yield BTC Futuros:   3.13% a.a.                  |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | Fetching Binance Klines for USDTBRL...
+btc_multicore_bot  | | [USDT/BRL] Preço:  5.18 | RSI: 30.6 | Saldo:     0.00 USDT |
+btc_multicore_bot  | |    + Sinal: USDT Momentum Up (Recovery)    | Status: REJECT   |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | | [ALPHA ML ] Sinais baseados em Order Flow & ML:                       |
+btc_multicore_bot  | Fetching Binance Klines for BTCBRL...
+btc_multicore_bot  | Fetching Binance Klines for ETHBRL...
+btc_multicore_bot  | Fetching Binance Klines for SOLBRL...
+btc_multicore_bot  | |    BTCBRL :  0 | Prob: 52.1% | Conviccao Baixa (52.1%)        |
+btc_multicore_bot  | |    SOLBRL :  0 | Prob: 49.5% | Conviccao Baixa (49.5%)        |
+btc_multicore_bot  | |    ETHBRL : -1 | Prob: 56.9% | Confluencia ML                 |
+btc_multicore_bot  | Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `pnl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=6, column=40, offset=274>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 274, 'line': 6, 'column': 40}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (e:Event)-[:HAPPENED_IN]->(m:MacroState)\n        WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol\n        MATCH (d:Decision)-[:BASED_ON]->(e)\n        OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)\n        WITH d, o WHERE o IS NULL OR o.pnl IS NOT NULL\n        RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences\n        '
+btc_multicore_bot  | Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `pnl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=7, column=22, offset=311>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 311, 'line': 7, 'column': 22}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (e:Event)-[:HAPPENED_IN]->(m:MacroState)\n        WHERE abs(e.sentiment - $sent) < $tol AND abs(m.risk_score - $risk) < $tol\n        MATCH (d:Decision)-[:BASED_ON]->(e)\n        OPTIONAL MATCH (o:Outcome)-[:FOLLOWED]->(d)\n        WITH d, o WHERE o IS NULL OR o.pnl IS NOT NULL\n        RETURN avg(o.pnl) as avg_pnl, count(d) as total_occurrences\n        '
+btc_multicore_bot  | | [STRATEGIST] Decisao: EXECUTE_ALPHA | Mult: 1.00 |
+btc_multicore_bot  | +--------------------------------------------------------------------------------+
+btc_multicore_bot  | Fetching Binance Klines for XAUTBTC...
+btc_multicore_bot  | | [XAUT/BTC] Ratio: 0.069240 BTC/XAUT | RSI ratio:  18.8 | BB%: 0.25        |
+btc_multicore_bot  | | Pool BTC: 0.00000 BTC livre   | Posicoes: 0/3 | PnL latente: +0.000000 BTC         |
+btc_multicore_bot  | |   . Sinal: Ratio Neutro                   | Conf: 0% | Thresh: 55%   |
+btc_multicore_bot  | +------------------------------------------------------------------------+
+btc_multicore_bot  | | # LOG RECENTE:                                                        |
+btc_multicore_bot  | +------------------------------------------------------------------------+

@@ -595,7 +595,10 @@ class MulticoreMasterBot:
                     lines_usdt = self._process_usdt(timestamp)
                     for l in lines_usdt: print(l)
                     print(f"+{'-'*72}+")
-                except Exception as e: print(f"[USDT] Erro Loop: {e}")
+                except Exception as e:
+                    import traceback
+                    print(f"[USDT] Erro Loop: {e}")
+                    traceback.print_exc()
 
                 # TIER 2: ALPHA ML
                 print(f"| [ALPHA ML ] Sinais baseados em Order Flow & ML:                       |")
