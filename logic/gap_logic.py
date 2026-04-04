@@ -69,18 +69,20 @@ class GapLogic:
         if row_idx < 20: return "None"
         if row_idx >= len(df): return "None"
         
-        row = df.iloc[row_idx]
-        prev_row = df.iloc[row_idx-1]
-        gap_size = abs(row['open'] / prev_row['close'] - 1)
+        row_open = float(df['open'].to_numpy()[row_idx])
+        row_volume = float(df['volume'].to_numpy()[row_idx])
+        prev_row_close = float(df['close'].to_numpy()[row_idx-1])
+
+        gap_size = abs(row_open / prev_row_close - 1)
         
         if gap_size < 0.005: return "Normal"
         
-        avg_vol = df['volume'].iloc[max(0, row_idx-20):row_idx].mean()
-        is_high_vol = row['volume'] > avg_vol * 1.5
+        avg_vol = float(df['volume'].to_numpy()[max(0, row_idx-20):row_idx].mean())
+        is_high_vol = row_volume > avg_vol * 1.5
         
         # Trend detection
         prev_idx_10 = max(0, row_idx-10)
-        trend = (prev_row['close'] / df['close'].iloc[prev_idx_10]) - 1
+        trend = (prev_row_close / float(df['close'].to_numpy()[prev_idx_10])) - 1
         
         if is_high_vol and abs(trend) < 0.01:
             return "Breakaway"
@@ -99,34 +101,35 @@ class GapLogic:
         if classification == "None":
             return 0.0, False, "None"
             
-        row = df.iloc[row_idx]
-        prev_row = df.iloc[row_idx-1]
-        gap_size = (row['open'] / prev_row['close']) - 1
+        row_open = float(df['open'].to_numpy()[row_idx])
+        row_volume = float(df['volume'].to_numpy()[row_idx])
+        prev_row_close = float(df['close'].to_numpy()[row_idx-1])
+        gap_size = (row_open / prev_row_close) - 1
         
         # Scoring criteria
         score = 0.0
         
         # 1. Volume Confluence
-        avg_vol = df['volume'].iloc[max(0, row_idx-20):row_idx].mean()
-        vol_boost = min(1.0, (row['volume'] / avg_vol) / 4.0) # Cap at 4x Avg
+        avg_vol = float(df['volume'].to_numpy()[max(0, row_idx-20):row_idx].mean())
+        vol_boost = min(1.0, (row_volume / avg_vol) / 4.0) # Cap at 4x Avg
         score += vol_boost * 0.4 # Volume is 40% of the score
         
         # 2. Trend Confluence (SMA50 Slope)
         # Assuming SMA_50 is available. If not, fallback to simple closes.
         if 'SMA_50' in df.columns:
-            sma_slope = df['SMA_50'].diff(5).iloc[row_idx]
+            sma_slope = float(df['SMA_50'].diff(5).to_numpy()[row_idx])
             if (gap_size > 0 and sma_slope > 0) or (gap_size < 0 and sma_slope < 0):
                 score += 0.3 # Trend alignment is 30%
         else:
             # Fallback simple trend
             prev_idx_20 = max(0, row_idx-20)
-            trend_20 = (prev_row['close'] / df['close'].iloc[prev_idx_20]) - 1
+            trend_20 = (prev_row_close / float(df['close'].to_numpy()[prev_idx_20])) - 1
             if (gap_size > 0 and trend_20 > 0) or (gap_size < 0 and trend_20 < 0):
                 score += 0.2
         
         # 3. Order Flow Confluence (CVD Divergence)
         if 'cvd_div' in df.columns:
-            cvd_div = df['cvd_div'].iloc[row_idx]
+            cvd_div = float(df['cvd_div'].to_numpy()[row_idx])
             if (gap_size > 0 and cvd_div == 1) or (gap_size < 0 and cvd_div == -1):
                 score += 0.3 # CVD confluence is 30%
         
