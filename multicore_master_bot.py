@@ -117,6 +117,8 @@ class MulticoreMasterBot:
         self.agent = StrategistAgent() 
         self.miro_client = MiroFishClient() # MiroFish AI Agent Swarm
         self.miro_sim_id = "live_bot_sim"
+        self.ntfy_topic = os.getenv("NTFY_TOPIC", "btc_bot_trades")
+        self.ntfy_url = "http://ntfy" # Docker internal hostname
         # Garante que a simulação existe
         self.miro_client.create_simulation("auto_live", self.miro_sim_id)
         self.miro_client.start_simulation(self.miro_sim_id)
@@ -150,9 +152,25 @@ class MulticoreMasterBot:
                 self.stats[asset]["samples"] = len(df)
                 self.stats[asset]["oos_score"] = oos_score
         
-        print(f"Master Bot Multicore Pronto!")
-
-    # _setup_routes and _run_api removed
+    def notify_ntfy(self, message, title="BTC BOT UPDATE"):
+        """Envia notificacao push via ntfy (Docker Net)"""
+        try:
+            if not self.ntfy_topic:
+                return
+            url = f"{self.ntfy_url}/{self.ntfy_topic}"
+            tags = "shopping_cart" if "ABERTO" in message else "heavy_dollar_sign"
+            priority = "high" if "ABERTO" in message else "default"
+            
+            requests.post(url, 
+                         data=message.encode('utf-8'),
+                         headers={
+                             "Title": title,
+                             "Priority": priority,
+                             "Tags": tags
+                         },
+                         timeout=5)
+        except Exception as e:
+            print(f"[NOTIFY] Erro ao enviar notificacao: {e}")
 
     def _validate_api_keys(self):
         if not self.api_key or not self.api_secret:
@@ -713,6 +731,7 @@ class MulticoreMasterBot:
                                 log_out = f"[{timestamp}] FECHADO {asset}: {exit_reason} | PnL: {net_pnl:+.2%} | BRL: {self.balance:.2f}"
                                 self.history_log.insert(0, log_out)
                                 self.save_balance()
+                                self.notify_ntfy(log_out, title=f"VENDA: {asset}")
                             else:
                                 remaining.append(pos)
                         self.positions[asset] = remaining
@@ -743,6 +762,7 @@ class MulticoreMasterBot:
                                     log_in = f"[{timestamp}] ABERTO {asset} ({smodifiers['size_mult']}x): @ {entry_p:.2f} | BRL: {self.balance:.2f}"
                                     self.history_log.insert(0, log_in)
                                     self.save_balance(); self.save_state()
+                                    self.notify_ntfy(log_in, title=f"COMPRA: {asset}")
                                     print(f"| [AGENT] {asset}: {agent_reason[:50]}... |")
                             else:
                                 if iter_count % 10 == 0:
