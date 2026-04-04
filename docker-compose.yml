@@ -18,6 +18,8 @@ services:
       - ./MiroFish/.env
     networks:
       - quant_net
+    volumes:
+      - ./MiroFish/backend/uploads:/app/backend/uploads
 
   # 2. Advanced Multicore BTC Bot
   btc-master-bot:
