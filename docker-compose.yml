@@ -43,6 +43,7 @@ services:
     image: neo4j:latest
     container_name: btc_market_memory
     restart: unless-stopped
+    user: "7474:7474"
     ports:
       - "7474:7474" # HTTP Dashboard
       - "7687:7687" # Bolt Driver

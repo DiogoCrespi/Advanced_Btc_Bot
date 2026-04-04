@@ -61,11 +61,12 @@ class MiroFishClient:
         try:
             response = requests.get(url, timeout=self.timeout)
             if response.status_code == 404:
+                # 404 is a valid state if no report has been generated yet
                 return {"success": False, "error": "Report not found", "has_report": False}
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"Error getting report: {e}")
+            logger.error(f"Error getting report for {simulation_id}: {e}")
             return {"success": False, "error": str(e)}
 
     def generate_report(self, simulation_id: str) -> Dict[str, Any]:

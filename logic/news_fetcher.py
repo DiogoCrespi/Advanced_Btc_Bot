@@ -69,6 +69,15 @@ class NewsFetcher:
         self._tavily_ok    = True
         self._flags_reset  = time.time()
 
+        # MiroFish Integration
+        self.mirofish_url = os.getenv("MIROFISH_API_URL")
+        self.simulation_id = os.getenv("MIROFISH_SIMULATION_ID", "live_bot_sim")
+        if self.mirofish_url:
+            from logic.mirofish_client import MiroFishClient
+            self.miro_client = MiroFishClient(self.mirofish_url)
+        else:
+            self.miro_client = None
+
     # ─── Public Interface ────────────────────────────────────────────────────
 
     def fetch(self, query: str | None = None) -> List[Dict[str, Any]]:
@@ -137,11 +146,41 @@ class NewsFetcher:
                     score -= 1
 
         normalized = float(max(-1.0, min(1.0, score / max(len(arts), 1))))
-        signal = "bullish" if normalized > 0.1 else ("bearish" if normalized < -0.1 else "neutral")
+        
+        # ─── Attempt 3: MiroFish Integration (Advanced) ──────────────────────
+        miro_score = 0.0
+        has_miro = False
+        if self.miro_client:
+            try:
+                miro_summary = self.miro_client.get_sentiment_summary(self.simulation_id)
+                sentiment = miro_summary.get("sentiment", "Neutral")
+                confidence = miro_summary.get("confidence", 0.5)
+                
+                if sentiment == "Bullish":
+                    miro_score = confidence
+                elif sentiment == "Bearish":
+                    miro_score = -confidence
+                
+                has_miro = True
+                logger.debug("[MIROFISH] Simulation: %s | Sentiment: %s | Confidence: %.2f", self.simulation_id, sentiment, confidence)
+            except Exception as e:
+                logger.warning("[MIROFISH] Sentiment fetch failed: %s", e)
+
+        # Combine scores (70/30 weight if MiroFish is available)
+        if has_miro:
+            final_score = (0.3 * normalized) + (0.7 * miro_score)
+        else:
+            final_score = normalized
+
+        # Clamp again
+        final_score = float(max(-1.0, min(1.0, final_score)))
+        signal = "bullish" if final_score > 0.1 else ("bearish" if final_score < -0.1 else "neutral")
 
         return {
             "signal":        signal,
-            "score":         round(normalized, 3),
+            "score":         round(final_score, 3),
+            "keyword_score": round(normalized, 3),
+            "miro_score":    round(miro_score, 3) if has_miro else None,
             "article_count": len(arts),
         }
 
