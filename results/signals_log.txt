@@ -13,3 +13,4 @@
 [09:26:23] BTCBRL   : NEUTRO (46%)       - Convicção Baixa Ponderada (45.8%) | Confianca: 44% | SL: 1.5% | TP: 3.0%
 [09:26:23] ETHBRL   : NEUTRO (48%)       - Convicção Baixa Ponderada (48.1%) | Confianca: 42% | SL: 1.5% | TP: 3.0%
 [09:26:23] SOLBRL   : NEUTRO (61%)       - Sinal Neutro / Sem Oportunidades | Confianca: 24% | SL: 1.5% | TP: 3.0%
+[12:00:00] COMPRA USDT: Test Reason | Preco: 50000.00 | Qtd: 0.01

@@ -84,10 +84,9 @@ class XAUTAnalyzer:
         if df is None or len(df) < 2:
             return 0, 0.0, "Dados insuficientes"
 
-        last = df.iloc[-1]
-        rsi    = float(last.get('ratio_rsi',   50.0))
-        bb_pct = float(last.get('bb_pct',       0.5))
-        slope  = float(last.get('ratio_slope',  0.0))
+        rsi    = float(df['ratio_rsi'].values[-1]) if 'ratio_rsi' in df.columns else 50.0
+        bb_pct = float(df['bb_pct'].values[-1]) if 'bb_pct' in df.columns else 0.5
+        slope  = float(df['ratio_slope'].values[-1]) if 'ratio_slope' in df.columns else 0.0
 
         # Validacao de dados corrompidos
         if not all(np.isfinite([rsi, bb_pct, slope])):
