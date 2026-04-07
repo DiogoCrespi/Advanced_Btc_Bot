@@ -2,6 +2,12 @@
 ## 2024-05-18 - Replacing loops and iloc with vectorized binning
 **Learning:** Found a major performance bottleneck where a `for` loop combined with `iloc` was used to allocate volume to price bins when calculating the Volume Profile (Point of Control) in `logic/order_flow_logic.py`. Iterating row-by-row and accessing via `iloc` is incredibly slow in Pandas. Attempting to use `np.histogram` directly caused a discrepancy due to how it handles the rightmost bin boundary vs the original code's exact interval matching logic which excluded exactly `max_p`.
 **Action:** Always prefer `np.digitize` combined with `np.bincount` instead of `np.histogram` or loops to ensure identical right-edge conditions and achieve >100x performance improvements without breaking existing edge cases.
+ 
 ## 2024-05-18 - Replacing loops and iloc with vectorized arrays in logic tools
 **Learning:** Found multiple performance bottlenecks where `for` loops combined with `iloc` were used to access elements of DataFrames in backtesting tools (`tools/optimizer.py`, `tools/backtest_stat_arb.py`, `tools/time_machine_simulator.py`, `tools/backtest_cash_carry.py`). Iterating row-by-row and accessing via `iloc` is incredibly slow in Pandas and significantly impacted the speed of simulations. Pre-extracting the necessary columns into NumPy arrays using `.values` before the loop and accessing them with array indexing drastically improves performance (e.g., from ~2.5s to ~0.02s per 10k rows in `optimizer.py`).
 **Action:** Always prefer pre-extracting columns to NumPy arrays using `.values` or `.to_numpy()` when iterating over Pandas DataFrames in loops to achieve >100x performance improvements without breaking existing logic. Use `float()` to cast array elements back to native types if necessary.
+ 
+## 2024-05-18 - Replacing `.iloc` access with `.values` in logic modules
+**Learning:** Found multiple places in strategy logic where single-row access via `df.iloc[-1]` or `df.iloc[row_idx]` is significantly slower than bypassing Pandas to index the underlying NumPy arrays directly via `df.values[-1]`. Additionally, when translating `.get('column', default)` onto arrays it must be rewritten safely as `df['column'].values[-1] if 'column' in df.columns else default`.
+**Action:** Always prefer indexing the underlying numpy arrays over `.iloc` for scalar or single-row extractions in high-frequency/latency-sensitive logic. Always explicitly cast extracted NumPy scalar types to native Python types like `float()` to prevent downstream type or serialization errors.
+ 
