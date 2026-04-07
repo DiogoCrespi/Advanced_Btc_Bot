@@ -32,7 +32,7 @@ def mock_ml_data():
         'sweep_low': [0]*1000,
         'cvd_div': [0]*1000
     }, index=dates)
-    return df.fillna(method='bfill').dropna()
+    return df.bfill().dropna()
 
 def test_ml_prepare_features(mock_ml_data):
     brain = MLBrain()

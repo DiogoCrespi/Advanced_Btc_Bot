@@ -47,14 +47,18 @@ class CashCarryBacktester:
             return
 
         # 3. Simulation Loop
+        # Pre-extract arrays for performance
+        close_arr = combined['Close'].values
+        funding_arr = combined['fundingRate'].values
+        time_arr = combined.index
+
         for i in range(len(combined)):
-            row = combined.iloc[i]
-            time = combined.index[i]
-            price = row['Close']
-            funding_rate = row['fundingRate']
+            time = time_arr[i]
+            price = float(close_arr[i])
+            funding_rate = float(funding_arr[i])
             
             # Historical fundings for signal (last 5 cycles)
-            historical_fundings = combined['fundingRate'].iloc[max(0, i-5):i+1].tolist()
+            historical_fundings = funding_arr[max(0, i-5):i+1].tolist()
             
             signal = self.logic.get_signal(funding_rate, historical_fundings)
 

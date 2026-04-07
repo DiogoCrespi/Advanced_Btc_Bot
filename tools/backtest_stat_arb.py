@@ -49,14 +49,22 @@ class StatArbBacktester:
         
         print(f"Starting simulation over {len(common_index)} candles...")
         
+        # Pre-extract arrays to avoid slow Pandas .iloc inside loops
+        z_score_arr = z_score.values
+        betas_arr = betas.values
+        spread_arr = spread.values
+        spread_mean_arr = spread_mean.values
+        btc_close_arr = df_btc['Close'].values
+        eth_close_arr = df_eth['Close'].values
+
         for i in range(100, len(common_index)):
-            z = z_score.iloc[i]
-            beta = betas.iloc[i]
-            s_curr = spread.iloc[i]
-            s_mean = spread_mean.iloc[i]
+            z = float(z_score_arr[i])
+            beta = float(betas_arr[i])
+            s_curr = float(spread_arr[i])
+            s_mean = float(spread_mean_arr[i])
             
-            p_btc = df_btc['Close'].iloc[i]
-            p_eth = df_eth['Close'].iloc[i]
+            p_btc = float(btc_close_arr[i])
+            p_eth = float(eth_close_arr[i])
             time = common_index[i]
             
             signal = self.logic.get_signal(z)

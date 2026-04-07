@@ -70,19 +70,23 @@ class TimeMachineSimulator:
             if processed_test.empty: continue
             f_cols = [c for c in processed_test.columns if c.startswith('feat_')]
             
+            # Pre-extract arrays for faster lookup in simulation loops
+            feat_arr = processed_test[f_cols].values
+            close_arr = processed_test['close'].values
+
             for j in range(len(processed_test)):
-                feat_vec = processed_test[f_cols].iloc[j].values
+                feat_vec = feat_arr[j]
                 signal, prob, reason = self.brain.predict_signal(feat_vec, f_cols)
                 
                 if signal != 0 and prob > self.prob_threshold:
                     self.trades += 1
                     # SL/TP Logic (look ahead in the test segment or until next training)
                     trade_result = 0
-                    current_price = processed_test['close'].iloc[j]
+                    current_price = float(close_arr[j])
                     
                     found_exit = False
                     for k in range(j + 1, len(processed_test)):
-                        check_price = processed_test['close'].iloc[k]
+                        check_price = float(close_arr[k])
                         price_ret = (check_price / current_price) - 1
                         
                         # Apply Long strategy
@@ -100,7 +104,7 @@ class TimeMachineSimulator:
                     
                     # If no exit hit by end of segment, take current return
                     if not found_exit and j + 1 < len(processed_test):
-                        final_ret = (processed_test['close'].values[-1] / current_price) - 1
+                        final_ret = (float(close_arr[-1]) / current_price) - 1
                         trade_result = final_ret * signal
                         if trade_result > 0: self.wins += 1
                     
