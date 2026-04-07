@@ -643,16 +643,11 @@ def get_agent_names_from_config(config: Dict[str, Any]) -> Dict[int, str]:
     Returns:
         agent_id -> entity_name 的映射字典
     """
-    agent_names = {}
-    agent_configs = config.get("agent_configs", [])
-    
-    for agent_config in agent_configs:
-        agent_id = agent_config.get("agent_id")
-        entity_name = agent_config.get("entity_name", f"Agent_{agent_id}")
-        if agent_id is not None:
-            agent_names[agent_id] = entity_name
-    
-    return agent_names
+    return {
+        agent_id: c.get("entity_name", f"Agent_{agent_id}")
+        for c in config.get("agent_configs", [])
+        if (agent_id := c.get("agent_id")) is not None
+    }
 
 
 def fetch_new_actions_from_db(
