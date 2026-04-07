@@ -692,6 +692,9 @@ def fetch_new_actions_from_db(
             ORDER BY rowid ASC
         """, (last_rowid,))
         
+        raw_actions = []
+        quote_post_ids = set()
+
         for rowid, user_id, action, info_json in cursor.fetchall():
             # 更新最大 rowid
             new_last_rowid = rowid
@@ -730,15 +733,40 @@ def fetch_new_actions_from_db(
             # 转换动作类型名称
             action_type = ACTION_TYPE_MAP.get(action, action.upper())
             
-            # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_type, simplified_args, agent_names)
+            # 收集 quote_post 的 new_post_id
+            if action_type == 'QUOTE_POST':
+                new_post_id = simplified_args.get('new_post_id')
+                if new_post_id:
+                    quote_post_ids.add(new_post_id)
             
-            actions.append({
+            raw_actions.append({
                 'agent_id': user_id,
                 'agent_name': agent_names.get(user_id, f'Agent_{user_id}'),
                 'action_type': action_type,
                 'action_args': simplified_args,
             })
+
+        # 批量查询 quote_content 解决 N+1 问题
+        quote_contents_map = {}
+        if quote_post_ids:
+            # SQLite 一次最多允许 999 个参数
+            chunk_size = 900
+            quote_post_ids_list = list(quote_post_ids)
+            for i in range(0, len(quote_post_ids_list), chunk_size):
+                chunk = quote_post_ids_list[i:i + chunk_size]
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT post_id, quote_content FROM post WHERE post_id IN ({placeholders})
+                """, chunk)
+                for row in cursor.fetchall():
+                    if row[1]:  # quote_content is not None/empty
+                        quote_contents_map[row[0]] = row[1]
+
+        for action_data in raw_actions:
+            # 补充上下文信息（帖子内容、用户名等）
+            _enrich_action_context(cursor, action_data['action_type'], action_data['action_args'], agent_names, quote_contents_map)
+
+            actions.append(action_data)
         
         conn.close()
     except Exception as e:
@@ -751,7 +779,8 @@ def _enrich_action_context(
     cursor,
     action_type: str,
     action_args: Dict[str, Any],
-    agent_names: Dict[int, str]
+    agent_names: Dict[int, str],
+    quote_contents_map: Optional[Dict[int, str]] = None
 ) -> None:
     """
     为动作补充上下文信息（帖子内容、用户名等）
@@ -801,12 +830,16 @@ def _enrich_action_context(
             
             # 获取引用帖子的评论内容（quote_content）
             if new_post_id:
-                cursor.execute("""
-                    SELECT quote_content FROM post WHERE post_id = ?
-                """, (new_post_id,))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    action_args['quote_content'] = row[0]
+                if quote_contents_map is not None and new_post_id in quote_contents_map:
+                    action_args['quote_content'] = quote_contents_map[new_post_id]
+                elif quote_contents_map is None:
+                    # Fallback to single query if map is not provided
+                    cursor.execute("""
+                        SELECT quote_content FROM post WHERE post_id = ?
+                    """, (new_post_id,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        action_args['quote_content'] = row[0]
         
         # 关注用户：补充被关注用户的名称
         elif action_type == 'FOLLOW':
