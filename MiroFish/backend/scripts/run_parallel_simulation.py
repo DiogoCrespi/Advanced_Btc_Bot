@@ -757,9 +757,10 @@ def fetch_new_actions_from_db(
                     if row[1]:  # quote_content is not None/empty
                         quote_contents_map[row[0]] = row[1]
 
+        user_names_cache = {}
         for action_data in raw_actions:
             # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_data['action_type'], action_data['action_args'], agent_names, quote_contents_map)
+            _enrich_action_context(cursor, action_data['action_type'], action_data['action_args'], agent_names, quote_contents_map, user_names_cache)
 
             actions.append(action_data)
         
@@ -775,7 +776,8 @@ def _enrich_action_context(
     action_type: str,
     action_args: Dict[str, Any],
     agent_names: Dict[int, str],
-    quote_contents_map: Optional[Dict[int, str]] = None
+    quote_contents_map: Optional[Dict[int, str]] = None,
+    user_names_cache: Optional[Dict[int, str]] = None
 ) -> None:
     """
     为动作补充上下文信息（帖子内容、用户名等）
@@ -785,13 +787,15 @@ def _enrich_action_context(
         action_type: 动作类型
         action_args: 动作参数（会被修改）
         agent_names: agent_id -> agent_name 映射
+        quote_contents_map: quote_post 的内容映射
+        user_names_cache: 用户名缓存字典
     """
     try:
         # 点赞/踩帖子：补充帖子内容和作者
         if action_type in ('LIKE_POST', 'DISLIKE_POST'):
             post_id = action_args.get('post_id')
             if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names)
+                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache)
                 if post_info:
                     action_args['post_content'] = post_info.get('content', '')
                     action_args['post_author_name'] = post_info.get('author_name', '')
@@ -807,7 +811,7 @@ def _enrich_action_context(
                 row = cursor.fetchone()
                 if row and row[0]:
                     original_post_id = row[0]
-                    original_info = _get_post_info(cursor, original_post_id, agent_names)
+                    original_info = _get_post_info(cursor, original_post_id, agent_names, user_names_cache)
                     if original_info:
                         action_args['original_content'] = original_info.get('content', '')
                         action_args['original_author_name'] = original_info.get('author_name', '')
@@ -818,7 +822,7 @@ def _enrich_action_context(
             new_post_id = action_args.get('new_post_id')
             
             if quoted_id:
-                original_info = _get_post_info(cursor, quoted_id, agent_names)
+                original_info = _get_post_info(cursor, quoted_id, agent_names, user_names_cache)
                 if original_info:
                     action_args['original_content'] = original_info.get('content', '')
                     action_args['original_author_name'] = original_info.get('author_name', '')
@@ -847,7 +851,7 @@ def _enrich_action_context(
                 row = cursor.fetchone()
                 if row:
                     followee_id = row[0]
-                    target_name = _get_user_name(cursor, followee_id, agent_names)
+                    target_name = _get_user_name(cursor, followee_id, agent_names, user_names_cache)
                     if target_name:
                         action_args['target_user_name'] = target_name
         
@@ -856,7 +860,7 @@ def _enrich_action_context(
             # 从 action_args 中获取 user_id 或 target_id
             target_id = action_args.get('user_id') or action_args.get('target_id')
             if target_id:
-                target_name = _get_user_name(cursor, target_id, agent_names)
+                target_name = _get_user_name(cursor, target_id, agent_names, user_names_cache)
                 if target_name:
                     action_args['target_user_name'] = target_name
         
@@ -864,7 +868,7 @@ def _enrich_action_context(
         elif action_type in ('LIKE_COMMENT', 'DISLIKE_COMMENT'):
             comment_id = action_args.get('comment_id')
             if comment_id:
-                comment_info = _get_comment_info(cursor, comment_id, agent_names)
+                comment_info = _get_comment_info(cursor, comment_id, agent_names, user_names_cache)
                 if comment_info:
                     action_args['comment_content'] = comment_info.get('content', '')
                     action_args['comment_author_name'] = comment_info.get('author_name', '')
@@ -873,7 +877,7 @@ def _enrich_action_context(
         elif action_type == 'CREATE_COMMENT':
             post_id = action_args.get('post_id')
             if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names)
+                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache)
                 if post_info:
                     action_args['post_content'] = post_info.get('content', '')
                     action_args['post_author_name'] = post_info.get('author_name', '')
@@ -886,7 +890,8 @@ def _enrich_action_context(
 def _get_post_info(
     cursor,
     post_id: int,
-    agent_names: Dict[int, str]
+    agent_names: Dict[int, str],
+    user_names_cache: Optional[Dict[int, str]] = None
 ) -> Optional[Dict[str, str]]:
     """
     获取帖子信息
@@ -895,6 +900,7 @@ def _get_post_info(
         cursor: 数据库游标
         post_id: 帖子ID
         agent_names: agent_id -> agent_name 映射
+        user_names_cache: 用户名缓存字典
         
     Returns:
         包含 content 和 author_name 的字典，或 None
@@ -918,10 +924,7 @@ def _get_post_info(
                 author_name = agent_names[agent_id]
             elif user_id:
                 # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
+                author_name = _get_user_name(cursor, user_id, agent_names, user_names_cache) or ''
             
             return {'content': content, 'author_name': author_name}
     except Exception:
@@ -932,7 +935,8 @@ def _get_post_info(
 def _get_user_name(
     cursor,
     user_id: int,
-    agent_names: Dict[int, str]
+    agent_names: Dict[int, str],
+    user_names_cache: Optional[Dict[int, str]] = None
 ) -> Optional[str]:
     """
     获取用户名称
@@ -941,10 +945,14 @@ def _get_user_name(
         cursor: 数据库游标
         user_id: 用户ID
         agent_names: agent_id -> agent_name 映射
+        user_names_cache: 用户名缓存字典
         
     Returns:
         用户名称，或 None
     """
+    if user_names_cache is not None and user_id in user_names_cache:
+        return user_names_cache[user_id]
+
     try:
         cursor.execute("""
             SELECT agent_id, name, user_name FROM user WHERE user_id = ?
@@ -957,17 +965,26 @@ def _get_user_name(
             
             # 优先使用 agent_names 中的名称
             if agent_id is not None and agent_id in agent_names:
-                return agent_names[agent_id]
-            return name or user_name or ''
+                result = agent_names[agent_id]
+            else:
+                result = name or user_name or ''
+
+            if user_names_cache is not None:
+                user_names_cache[user_id] = result
+            return result
     except Exception:
         pass
+
+    if user_names_cache is not None:
+        user_names_cache[user_id] = None
     return None
 
 
 def _get_comment_info(
     cursor,
     comment_id: int,
-    agent_names: Dict[int, str]
+    agent_names: Dict[int, str],
+    user_names_cache: Optional[Dict[int, str]] = None
 ) -> Optional[Dict[str, str]]:
     """
     获取评论信息
@@ -976,6 +993,7 @@ def _get_comment_info(
         cursor: 数据库游标
         comment_id: 评论ID
         agent_names: agent_id -> agent_name 映射
+        user_names_cache: 用户名缓存字典
         
     Returns:
         包含 content 和 author_name 的字典，或 None
@@ -999,10 +1017,7 @@ def _get_comment_info(
                 author_name = agent_names[agent_id]
             elif user_id:
                 # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
+                author_name = _get_user_name(cursor, user_id, agent_names, user_names_cache) or ''
             
             return {'content': content, 'author_name': author_name}
     except Exception:
