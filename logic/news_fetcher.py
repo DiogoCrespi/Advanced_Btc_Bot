@@ -21,9 +21,10 @@ from __future__ import annotations
 import os
 import logging
 import time
+import asyncio
 from typing import List, Dict, Any
 
-import requests
+import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -82,7 +83,23 @@ class NewsFetcher:
 
     def fetch(self, query: str | None = None) -> List[Dict[str, Any]]:
         """
-        Returns a list of articles.  Uses cache if still fresh.
+        Synchronous wrapper for fetch_async.
+        Returns a list of articles. Uses cache if still fresh.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                raise RuntimeError(
+                    "fetch() was called from a running event loop. "
+                    "Use fetch_async() instead in async contexts."
+                )
+        except RuntimeError:
+            pass
+        return asyncio.run(self.fetch_async(query))
+
+    async def fetch_async(self, query: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns a list of articles asynchronously. Uses cache if still fresh.
         Falls back automatically:  NewsAPI → Tavily → []
         """
         if time.time() - self._cache_ts < self.cache_ttl and self._cache:
@@ -93,27 +110,28 @@ class NewsFetcher:
         effective_query = query or self.query
         articles: List[Dict[str, Any]] = []
 
-        # ── Attempt 1: NewsAPI ────────────────────────────────────────────
-        if self._newsapi_ok and NEWSAPI_KEY:
-            articles = self._fetch_newsapi(effective_query)
-            if articles:
-                logger.info("[NEWS] NewsAPI returned %d articles.", len(articles))
-                self._update_cache(articles)
-                return articles
-            else:
-                logger.warning("[NEWS] NewsAPI returned nothing – switching to Tavily.")
-                self._newsapi_ok = False
+        async with aiohttp.ClientSession() as session:
+            # ── Attempt 1: NewsAPI ────────────────────────────────────────────
+            if self._newsapi_ok and NEWSAPI_KEY:
+                articles = await self._fetch_newsapi(session, effective_query)
+                if articles:
+                    logger.info("[NEWS] NewsAPI returned %d articles.", len(articles))
+                    self._update_cache(articles)
+                    return articles
+                else:
+                    logger.warning("[NEWS] NewsAPI returned nothing – switching to Tavily.")
+                    self._newsapi_ok = False
 
-        # ── Attempt 2: Tavily ─────────────────────────────────────────────
-        if self._tavily_ok and TAVILY_KEY:
-            articles = self._fetch_tavily(effective_query)
-            if articles:
-                logger.info("[NEWS] Tavily returned %d articles.", len(articles))
-                self._update_cache(articles)
-                return articles
-            else:
-                logger.warning("[NEWS] Tavily returned nothing – all APIs exhausted.")
-                self._tavily_ok = False
+            # ── Attempt 2: Tavily ─────────────────────────────────────────────
+            if self._tavily_ok and TAVILY_KEY:
+                articles = await self._fetch_tavily(session, effective_query)
+                if articles:
+                    logger.info("[NEWS] Tavily returned %d articles.", len(articles))
+                    self._update_cache(articles)
+                    return articles
+                else:
+                    logger.warning("[NEWS] Tavily returned nothing – all APIs exhausted.")
+                    self._tavily_ok = False
 
         # ── Total failure ─────────────────────────────────────────────────
         if not NEWSAPI_KEY and not TAVILY_KEY:
@@ -186,41 +204,41 @@ class NewsFetcher:
 
     # ─── Private: NewsAPI ─────────────────────────────────────────────────────
 
-    def _fetch_newsapi(self, query: str) -> List[Dict[str, Any]]:
-        """Calls NewsAPI /v2/everything and normalizes response."""
+    async def _fetch_newsapi(self, session: aiohttp.ClientSession, query: str) -> List[Dict[str, Any]]:
+        """Calls NewsAPI /v2/everything asynchronously and normalizes response."""
         params = {
             "q":        query,
             "language": "en",
             "sortBy":   "publishedAt",
-            "pageSize": self.max_articles,
+            "pageSize": str(self.max_articles),
             "apiKey":   NEWSAPI_KEY,
         }
         try:
-            resp = requests.get(NEWSAPI_BASE, params=params, timeout=self.timeout)
-            data = resp.json()
+            async with session.get(NEWSAPI_BASE, params=params, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
+                data = await resp.json()
 
-            if resp.status_code == 429 or data.get("code") in ("rateLimited", "maximumResultsReached"):
-                logger.warning("[NEWS][NewsAPI] Rate-limit / quota hit (HTTP %s).", resp.status_code)
-                self._newsapi_ok = False
-                return []
+                if resp.status == 429 or data.get("code") in ("rateLimited", "maximumResultsReached"):
+                    logger.warning("[NEWS][NewsAPI] Rate-limit / quota hit (HTTP %s).", resp.status)
+                    self._newsapi_ok = False
+                    return []
 
-            if resp.status_code != 200 or data.get("status") != "ok":
-                logger.warning("[NEWS][NewsAPI] Non-OK response: %s", data.get("message", resp.status_code))
-                self._newsapi_ok = False
-                return []
+                if resp.status != 200 or data.get("status") != "ok":
+                    logger.warning("[NEWS][NewsAPI] Non-OK response: %s", data.get("message", resp.status))
+                    self._newsapi_ok = False
+                    return []
 
-            return [
-                {
-                    "title":        a.get("title", ""),
-                    "description":  a.get("description"),
-                    "url":          a.get("url", ""),
-                    "source":       "newsapi",
-                    "published_at": a.get("publishedAt", ""),
-                }
-                for a in data.get("articles", [])
-            ]
+                return [
+                    {
+                        "title":        a.get("title", ""),
+                        "description":  a.get("description"),
+                        "url":          a.get("url", ""),
+                        "source":       "newsapi",
+                        "published_at": a.get("publishedAt", ""),
+                    }
+                    for a in data.get("articles", [])
+                ]
 
-        except requests.exceptions.Timeout:
+        except asyncio.TimeoutError:
             logger.warning("[NEWS][NewsAPI] Request timed out.")
             self._newsapi_ok = False
         except Exception as exc:
@@ -231,8 +249,8 @@ class NewsFetcher:
 
     # ─── Private: Tavily ──────────────────────────────────────────────────────
 
-    def _fetch_tavily(self, query: str) -> List[Dict[str, Any]]:
-        """Calls Tavily Search API and normalizes response."""
+    async def _fetch_tavily(self, session: aiohttp.ClientSession, query: str) -> List[Dict[str, Any]]:
+        """Calls Tavily Search API asynchronously and normalizes response."""
         payload = {
             "api_key":              TAVILY_KEY,
             "query":                query,
@@ -243,31 +261,31 @@ class NewsFetcher:
             "topic":                "news",
         }
         try:
-            resp = requests.post(TAVILY_BASE, json=payload, timeout=self.timeout)
+            async with session.post(TAVILY_BASE, json=payload, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
+                if resp.status == 429:
+                    logger.warning("[NEWS][Tavily] Rate-limit hit.")
+                    self._tavily_ok = False
+                    return []
 
-            if resp.status_code == 429:
-                logger.warning("[NEWS][Tavily] Rate-limit hit.")
-                self._tavily_ok = False
-                return []
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.warning("[NEWS][Tavily] HTTP %s – %s", resp.status, text[:200])
+                    self._tavily_ok = False
+                    return []
 
-            if resp.status_code != 200:
-                logger.warning("[NEWS][Tavily] HTTP %s – %s", resp.status_code, resp.text[:200])
-                self._tavily_ok = False
-                return []
+                data = await resp.json()
+                return [
+                    {
+                        "title":        r.get("title", ""),
+                        "description":  r.get("content", "")[:280] if r.get("content") else None,
+                        "url":          r.get("url", ""),
+                        "source":       "tavily",
+                        "published_at": r.get("published_date", ""),
+                    }
+                    for r in data.get("results", [])
+                ]
 
-            data = resp.json()
-            return [
-                {
-                    "title":        r.get("title", ""),
-                    "description":  r.get("content", "")[:280] if r.get("content") else None,
-                    "url":          r.get("url", ""),
-                    "source":       "tavily",
-                    "published_at": r.get("published_date", ""),
-                }
-                for r in data.get("results", [])
-            ]
-
-        except requests.exceptions.Timeout:
+        except asyncio.TimeoutError:
             logger.warning("[NEWS][Tavily] Request timed out.")
             self._tavily_ok = False
         except Exception as exc:
