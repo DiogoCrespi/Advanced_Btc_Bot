@@ -17,11 +17,12 @@ def mock_ml_data():
     # Aumentando para 1000 periodos e garantindo que os nomes das colunas coincidam com o aplicado no DataEngine
     dates = pd.date_range(start="2024-01-01", periods=1000, freq="h")
     # Simula um mercado com tendencia para o modelo aprender algo
-    close = np.linspace(50000, 60000, 1000) + np.random.normal(0, 100, 1000)
+    # Aumentando o desvio padrao consideravelmente para garantir volatidade e ativacao de diversidade de labels (Stop Loss / Take Profit)
+    close = np.linspace(50000, 60000, 1000) + np.random.normal(0, 1500, 1000)
     df = pd.DataFrame({
         'open': close * 0.999,
-        'high': close * 1.001,
-        'low': close * 0.998,
+        'high': close * 1.05,
+        'low': close * 0.95,
         'close': close,
         'volume': np.random.uniform(10, 100, 1000),
         'SMA_50': pd.Series(close).rolling(50).mean().values,

@@ -52,6 +52,22 @@ class MLBrain:
         # Fluxo de Capital - Bitcoin Dominance (Novo!)
         df['feat_btc_dominance'] = df.get('btc_dominance', 50.0)
         
+        # Novas features dinamicas (MACD e Bollinger Bands Multi-Timeframe)
+        df['feat_macd_line_1h'] = df.get('MACD_line_1h', 0)
+        df['feat_macd_hist_1h'] = df.get('MACD_hist_1h', 0)
+        df['feat_macd_signal_1h'] = df.get('MACD_signal_1h', 0)
+        df['feat_bb_pct_distance_1h'] = df.get('BB_pct_distance_1h', 0)
+
+        df['feat_macd_line_4h'] = df.get('MACD_line_4h', 0)
+        df['feat_macd_hist_4h'] = df.get('MACD_hist_4h', 0)
+        df['feat_macd_signal_4h'] = df.get('MACD_signal_4h', 0)
+        df['feat_bb_pct_distance_4h'] = df.get('BB_pct_distance_4h', 0)
+
+        df['feat_macd_line_1d'] = df.get('MACD_line_1d', 0)
+        df['feat_macd_hist_1d'] = df.get('MACD_hist_1d', 0)
+        df['feat_macd_signal_1d'] = df.get('MACD_signal_1d', 0)
+        df['feat_bb_pct_distance_1d'] = df.get('BB_pct_distance_1d', 0)
+
         # Limpeza: Dropamos NaNs (provenientes do rolling) para evitar Crash na RF
         return df.dropna()
 

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-04-08 12:43:00",
+  "timestamp": "2026-04-08 13:37:40",
   "balance": 1234.56,
-  "usdt_balance": 0.00740736,
+  "usdt_balance": 0.0,
   "trade_amount": 100.0,
   "sentiment": {
     "sentiment": "Neutral",
