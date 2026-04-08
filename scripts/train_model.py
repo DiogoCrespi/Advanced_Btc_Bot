@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="Symbol to train on")
     parser.add_argument("--epochs", type=int, default=200, help="n_estimators in Random Forest")
     parser.add_argument("--local", action="store_true", default=True, help="Use local historical parquet")
+    parser.add_argument('--shadow', action='store_true', help='Salva como modelo de sombra (_shadow.pkl)')
     return parser.parse_args()
 
 def main():
@@ -92,9 +93,10 @@ def main():
         brain.is_trained = True
         
         os.makedirs("models", exist_ok=True)
-        with open("models/brain_rf_v1.pkl", "wb") as f:
+        suffix = "_shadow" if args.shadow else "_v1"
+        with open(f"models/brain_rf{suffix}.pkl", "wb") as f:
             pickle.dump(brain.model, f)
-        with open("models/brain_features_v1.pkl", "wb") as f:
+        with open(f"models/brain_features{suffix}.pkl", "wb") as f:
             pickle.dump(brain.feature_cols, f)
         print("[+] Modelo salvo com sucesso em models/!")
     else:

@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from threading import Lock, Thread
+from collections import deque
 # removed: fastapi, uvicorn imports
 
 import math
@@ -197,9 +198,12 @@ class MulticoreMasterBot:
         # Macro Context
         self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
         
-        # Sonda de Acuracia: Histórico de Sinais para validação (Horizonte 24h)
-        # Chave: asset, Valor: list de (timestamp, signal, price)
-        self.signal_history = {asset: [] for asset in assets}
+        self.signal_history = {asset: deque(maxlen=1000) for asset in assets}
+        self.safe_mode = False
+        
+        # Shadow Brains: Modelos em Segundo Plano para comparação de performance
+        self.shadow_brains = {asset: MLBrain() for asset in assets}
+        self.shadow_stats = {asset: {"oos_score": 0.0, "is_training": False} for asset in assets}
         
         # Load Existing State
         self.usdt_balance = 0.0
@@ -257,8 +261,13 @@ class MulticoreMasterBot:
             
             # Tentar carregar modelo persistido
             if self.brains[asset].load_model(model_path):
-                self.stats[asset]["oos_score"] = 0.5 # Placeholder para modelo carregado
-                print(f"[BOOT] {asset}: Modelo recuperado com sucesso. Pronto para execucao imediata.")
+                self.stats[asset]["oos_score"] = 0.5 
+                print(f"[BOOT] {asset}: Modelo LIVE recuperado.")
+            
+            # Tentar carregar Shadow Model (se existir)
+            shadow_path = f"models/{asset.lower()}_brain_shadow.pkl"
+            if self.shadow_brains[asset].load_model(shadow_path):
+                print(f"[BOOT] {asset}: Modelo SHADOW recuperado para comparação.")
             else:
                 # Fallback: Treinamento Massivo
                 print(f"[WARN] {asset}: Modelo nao encontrado ou corrompido. Iniciando Treino de Resiliencia...")
@@ -633,6 +642,28 @@ class MulticoreMasterBot:
         seconds = total_seconds % 60
         return f"{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s"
 
+    async def _trigger_shadow_training(self):
+        """Dispara o script de treinamento em background via subprocesso."""
+        try:
+            import sys
+            cmd = [sys.executable, "scripts/train_model.py", "--shadow", "--local"]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            print(f"[SHADOW] Processo de treinamento iniciado (PID: {process.pid})")
+            stdout, stderr = await process.communicate()
+            if process.returncode == 0:
+                print("[SHADOW] Treinamento concluído com sucesso. Recarregando shadow_brains.")
+                for asset in self.assets:
+                    shadow_path = f"models/{asset.lower()}_brain_shadow.pkl"
+                    self.shadow_brains[asset].load_model(shadow_path)
+            else:
+                print(f"[SHADOW] Erro no treinamento: {stderr.decode()}")
+        except Exception as e:
+            print(f"[SHADOW] Falha crítica ao disparar treinamento: {e}")
+
     async def run_async(self):
         print(f"Iniciando Loop de Execucao (Intervalo: 30s)")
         print(f"[UPTIME] Bot iniciado em: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -660,24 +691,52 @@ class MulticoreMasterBot:
                 else: news_sent = 0.0
                 print(f"[MIROFISH] Analise de Sentimento Profundo: {m_sent} ({m_conf*100:.1f}%) | Score: {news_sent:.2f}")
                 
-                # --- Sonda de Acuracia: Validação de Sinais Passados ---
+                # --- Sonda de Acuracia Hierarquica (4h e 24h) ---
+                total_hits_4h, total_checked_4h = 0, 0
                 for asset in self.assets:
                     current_price = self.live_prices.get(asset, 0.0)
                     if current_price == 0: continue
                     
-                    # Filtramos sinais que completaram 24h e ainda não foram validados
-                    cutoff = datetime.now() - timedelta(hours=24)
-                    pending = [s for s in self.signal_history[asset] if not s['valid'] and s['ts'] <= cutoff]
+                    # Horizontes para cheque
+                    cutoff_4h = datetime.now() - timedelta(hours=4)
+                    cutoff_24h = datetime.now() - timedelta(hours=24)
                     
-                    for s in pending:
-                        price_diff = (current_price / s['price']) - 1
-                        is_correct = (s['sig'] == 1 and price_diff > 0.01) or (s['sig'] == -1 and price_diff < -0.01)
-                        s['valid'] = True
-                        s['result'] = "HIT" if is_correct else "MISS"
+                    for s in self.signal_history[asset]:
+                        # 1. Validação 4h (Drift Rápido)
+                        if not s.get('v4h') and s['ts'] <= cutoff_4h:
+                            p_diff = (current_price / s['price']) - 1
+                            hit = (s['sig'] == 1 and p_diff > 0.005) or (s['sig'] == -1 and p_diff < -0.005)
+                            s['v4h'] = True
+                            s['h4h'] = hit
+                            if not hit: print(f"[SONDA] DRIFT 4H DETECTADO: {asset} (Entrada: {s['price']:.2f}, Atual: {current_price:.2f})")
                         
-                        # Alerta se errar sequencialmente ou se a taxa cair
-                        if not is_correct:
-                            print(f"[SONDA] Sinal {asset} de 24h atras FALHOU. (Entrada: {s['price']:.2f}, Atual: {current_price:.2f})")
+                        # 2. Validação 24h (Tese Macro)
+                        if not s.get('v24h') and s['ts'] <= cutoff_24h:
+                            p_diff = (current_price / s['price']) - 1
+                            hit = (s['sig'] == 1 and p_diff > 0.01) or (s['sig'] == -1 and p_diff < -0.01)
+                            s['v24h'] = True
+                            s['h24h'] = hit
+
+                        if s.get('v4h'): 
+                            total_checked_4h += 1
+                            if s.get('h4h'): total_hits_4h += 1
+
+                # Logica de Safe Mode Automatica
+                if total_checked_4h > 10:
+                    acc_4h = total_hits_4h / total_checked_4h
+                    if acc_4h < 0.35 and not self.safe_mode:
+                        self.safe_mode = True
+                        msg = f"[ALERTA] SAFE MODE ATIVADO! Acuracia 4h em {acc_4h:.1%}. Bloqueando novas entradas e reduzindo risco."
+                        self.notify_ntfy(msg, title="BOT EM MODO DE SEGURANCA")
+                        print(msg)
+                    elif acc_4h >= 0.45 and self.safe_mode:
+                        self.safe_mode = False
+                        print("[SONDA] Acuracia recuperada. Desativando Safe Mode.")
+
+                # Trigger para Treinamento de Sombra se estiver em Safe Mode (A cada 120 iterações ~ 1 hora)
+                if self.safe_mode and iter_count % 120 == 0:
+                     print("[SHADOW] Acuracia baixa detectada. Disparando treinamento de sombra em background...")
+                     asyncio.create_task(self._trigger_shadow_training())
                 
                 # Gatilho de Memória (Debounce / Throttle 1x por hora)
                 now = datetime.now()
@@ -707,7 +766,7 @@ class MulticoreMasterBot:
                     news_sent
                 )
                 macro_mult, macro_msg = self.agent.radar.get_recommended_position_mult()
-                
+
                 # Salva estado no inicio do loop
                 self.save_state()
                 
@@ -829,25 +888,35 @@ class MulticoreMasterBot:
                         df_ml['macro_risk'] = self.macro_risk
                         df_ml['btc_dominance'] = self.btc_dominance
 
-                        # Fetch the brain instance (the brain model itself is usually pickleable
-                        # if it's just an sklearn model and basic variables)
+                        # Live Predict
                         brain_instance = self.brains[asset]
-                        
                         signal, prob, reason, current_price = await loop.run_in_executor(
                             self.process_executor,
                             _cpu_heavy_predict,
                             brain_instance, df_ml
                         )
                         
+                        # Shadow Predict (Ghost Prediction para comparação)
+                        shadow_sig = 0
+                        if self.shadow_brains[asset].is_trained:
+                            shadow_sig, s_prob, s_reason, _ = await loop.run_in_executor(
+                                self.process_executor,
+                                _cpu_heavy_predict,
+                                self.shadow_brains[asset], df_ml
+                            )
+                            if shadow_sig != signal:
+                                print(f"| [SHADOW] {asset}: Divergencia! Live={signal} vs Shadow={shadow_sig} |")
+                        
                         with signals_lock:
                             asset_signals[asset] = {'signal': signal, 'prob': prob, 'reason': reason, 'price': current_price}
-                            # Sonda de Acuracia: Registra o sinal para validacao futura (24h)
+                            # Sonda de Acuracia: Registra o sinal para validacao futura (4h/24h)
                             if signal != 0:
                                 self.signal_history[asset].append({
                                     'ts': datetime.now(),
                                     'sig': signal,
                                     'price': current_price,
-                                    'valid': False
+                                    'v4h': False,
+                                    'v24h': False
                                 })
                         
                         print(f"|    {asset:7}: {signal:2} | Prob: {prob:5.1%} | {reason:<30} |")
@@ -945,8 +1014,15 @@ class MulticoreMasterBot:
                         if signal != 0 and len(self.positions[asset]) < max_dca and not in_cooldown:
                             decision, agent_reason, smodifiers = self.agent.assess_trade(asset, signal, prob, reason)
                             
+                            # Filtro Safe Mode: Impede novas aberturas se a acuracia estiver baixa (Permite apenas DCAs/Exits)
+                            if self.safe_mode and len(self.positions[asset]) == 0:
+                                decision = "REJECT"
+                                agent_reason = "SAFE MODE: Acuracia degradada. Bloqueando novas entradas."
+
                             if decision == "APPROVE" and (agent_res['decision'] == "EXECUTE_ALPHA" or signal == 0):
-                                current_trade_size = (self.balance * self.risk_per_trade_pct) * (final_mult * smodifiers['size_mult'])
+                                # Ajuste de Risco Safe Mode: Reduz a mao em 50%
+                                risk_mult = 0.5 if self.safe_mode else 1.0
+                                current_trade_size = (self.balance * self.risk_per_trade_pct * risk_mult) * (final_mult * smodifiers['size_mult'])
                                 
                                 if self.balance >= current_trade_size and current_trade_size >= self.min_binance_amount:
                                     qty = current_trade_size / current_price
