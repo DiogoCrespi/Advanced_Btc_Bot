@@ -23,7 +23,7 @@ class MLBrain:
     def prepare_features(self, df):
         """
         Ingestão Dinâmica refatorada (PR #49).
-        Múltiplos timeframes (MACD, BB, RSI) já entram prefixados nativamente por DataEngine.
+        Múltiplos timeframes (MACD, BB, RSI) já entram prefixados nativamente por DataEngine/Features Tool.
         Isso empodera o Random Forest a cruzar médias móveis sem viés humano.
         """
         df = df.copy()

@@ -1,65 +1,104 @@
+import argparse
+import pandas as pd
+import numpy as np
 import os
 import sys
 import pickle
-import pandas as pd
-import numpy as np
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure project root is in PYTHONPATH
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from data.data_engine import DataEngine
 from logic.ml_brain import MLBrain
 
-def train_and_select_features():
-    file_path = "data/BTCUSDT_1h_historical.parquet" 
-    if not os.path.exists(file_path):
-        print(f"Dataset não encontrado: {file_path}. Rode o download_data.py primeiro.")
-        return
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train MLBrain Model with Feature Selection (PR #49 + Local Sonda)")
+    parser.add_argument("--symbol", type=str, default="BTCUSDT", help="Symbol to train on")
+    parser.add_argument("--epochs", type=int, default=200, help="n_estimators in Random Forest")
+    parser.add_argument("--local", action="store_true", default=True, help="Use local historical parquet")
+    return parser.parse_args()
 
-    print("[*] Carregando dataset e instanciando motor quantitativo...")
-    df = pd.read_parquet(file_path)
+def main():
+    args = parse_args()
+    file_path = f"data/{args.symbol}_1h_historical.parquet"
 
-    brain = MLBrain()
-    print("[*] Treinamento Inicial (Feature Importance Analysis)...")
-    base_score = brain.train(df, train_full=False)
-    print(f"[*] Precisão OOS (Walk-Forward) Inicial: {base_score:.4f}")
+    print(f"[*] Iniciando Sessão de Treinamento para {args.symbol}")
 
-    if not brain.model:
-        return
-
-    # Poda de Features (Remoção do Ruído)
-    importances = brain.model.feature_importances_
-    features = brain.feature_cols
-    
-    print("\n[!] Dissecação de Importância das Features:")
-    weak_features = []
-    
-    for feat, imp in sorted(zip(features, importances), key=lambda x: x[1], reverse=True):
-        status = ""
-        if imp < 0.01:
-            weak_features.append(feat)
-            status = "-> [DROPPED]"
-        print(f"   {feat:20}: {imp:.4f} {status}")
-        
-    if weak_features:
-        print(f"\n[*] Podando {len(weak_features)} features fracas (< 0.01) para evitar over-fitting...")
-        df.drop(columns=weak_features, inplace=True, errors='ignore')
-        
-        print("[*] Retreinando o modelo hiper-focado (Final Mode)...")
-        new_score = brain.train(df, train_full=False) 
-        print(f"[*] Nova Precisão OOS Walk-Forward: {new_score:.4f}")
-        
-        # Realiza o treino de cobertura total usando 100% dos dados para predições do bot ao-vivo
-        brain.train(df, train_full=True)
+    # 1. Load Data
+    if args.local and os.path.exists(file_path):
+        print(f"[*] Carregando dataset local: {file_path}")
+        df = pd.read_parquet(file_path)
     else:
-        print("\n[*] Nenhuma feature fraca detectada, todas mantém alta convicção preditiva.")
-        brain.train(df, train_full=True)
-        
-    os.makedirs("models", exist_ok=True)
-    with open("models/brain_rf_v1.pkl", "wb") as f:
-        pickle.dump(brain.model, f)
+        print(f"[*] Dataset local não encontrado. Buscando via API...")
+        engine = DataEngine()
+        df = engine.fetch_binance_klines(args.symbol, interval="1h", limit=3000)
+        if df.empty:
+            print("[-] Falha ao obter dados.")
+            return
+        df = engine.apply_indicators(df)
+
+    # 2. Prepare ML Brain
+    brain = MLBrain(n_estimators=args.epochs)
+    data = brain.prepare_features(df)
+    feature_cols = [c for c in data.columns if c.startswith('feat_')]
     
-    with open("models/brain_features_v1.pkl", "wb") as f:
-        pickle.dump(brain.feature_cols, f)
+    X_all = data[feature_cols].values
+    y_all = brain.create_labels(data)
+
+    min_len = min(len(X_all), len(y_all))
+    X = X_all[:min_len]
+    y = y_all[:min_len]
+
+    if len(np.unique(y)) < 2:
+        print("[-] Diversidade de labels insuficiente para o treino.")
+        return
+
+    # 3. TimeSeries Cross-Validation (PR #49 Logic)
+    from sklearn.model_selection import TimeSeriesSplit
+    tscv = TimeSeriesSplit(n_splits=5)
+    print("[*] Executando Validação Cruzada OOS (Walk-Forward)...")
+    
+    scores = []
+    for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        brain.model.fit(X_train, y_train)
+        score = brain.model.score(X_test, y_test)
+        scores.append(score)
+        print(f"  -> Fold {fold+1}: Accuracy = {score:.4f}")
+
+    print(f"[*] Acurácia Média CV: {np.mean(scores):.4f}")
+
+    # 4. Feature Importance & Selection
+    print("\n[*] Analisando Importância das Features...")
+    brain.model.fit(X, y) # Full fit for importance calculation
+    importances = brain.model.feature_importances_
+    feat_importances = pd.Series(importances, index=feature_cols).sort_values(ascending=False)
+
+    print("📊 RANKING DE IMPORTÂNCIA:")
+    selected_features = feat_importances[feat_importances > 0.01].index.tolist()
+    dropped_features = feat_importances[feat_importances <= 0.01].index.tolist()
+
+    for feat, imp in feat_importances.items():
+        status = "[KEEP]" if feat in selected_features else "[DROP]"
+        print(f"   {feat:25s} : {imp:.4f} {status}")
+
+    # 5. Final Export
+    if selected_features:
+        print(f"\n[*] Retreinando Modelo Final com {len(selected_features)} features...")
+        X_selected = data[selected_features].values[:min_len]
+        brain.model.fit(X_selected, y)
+        brain.feature_cols = selected_features
+        brain.is_trained = True
         
-    print("[+] Salvamento concluído em models/brain_rf_v1.pkl")
+        os.makedirs("models", exist_ok=True)
+        with open("models/brain_rf_v1.pkl", "wb") as f:
+            pickle.dump(brain.model, f)
+        with open("models/brain_features_v1.pkl", "wb") as f:
+            pickle.dump(brain.feature_cols, f)
+        print("[+] Modelo salvo com sucesso em models/!")
+    else:
+        print("[-] Erro: Todas as features foram descartadas.")
 
 if __name__ == "__main__":
-    train_and_select_features()
+    main()

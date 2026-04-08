@@ -1,5 +1,6 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import yfinance as yf
+import time
 import pandas as pd
 import numpy as np
 import requests
@@ -401,6 +402,13 @@ class DataEngine:
         # Mantendo retrocompatibilidade para partes do bot que exibem 'RSI_14' logado
         df['RSI_14'] = df['feat_rsi']
         
+        try:
+            from tools.features import apply_all_features
+            df = apply_all_features(df, close_col=close_col)
+        except ImportError as e:
+            print(f"Warning: tools.features not found. {e}")
+            pass
+
         return df
 
 if __name__ == "__main__":
