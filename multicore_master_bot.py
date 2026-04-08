@@ -32,6 +32,7 @@ from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
 from logic.mirofish_client import MiroFishClient
 from logic.coingecko_client import CoinGeckoClient
+from logic.risk_manager import RiskManager
 
 # Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
@@ -74,6 +75,9 @@ class MulticoreMasterBot:
         self.trade_amount = 100.0   # Base fallback
         self.risk_per_trade_pct = 0.05 # 5% per trade
         self.fee_rate = 0.001       # 0.1% Binance Standard
+
+        # Note: Risk is now handled dynamically by self.risk_manager.
+        # Keeping variables below for legacy references / internal ML Brain defaults.
         self.take_profit = 0.03     # 3% Base
         self.stop_loss = 0.015      # 1.5% Base
         self.trailing_activation = 0.015 # Activate trailing at 1.5% profit
@@ -126,6 +130,9 @@ class MulticoreMasterBot:
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
         
+        # Risk Manager Configuration
+        self.risk_manager = RiskManager()
+
         # Async I/O Logging Queue
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -586,6 +593,12 @@ class MulticoreMasterBot:
                     "equity": round(total_equity, 2)
                 })
                 if len(self.equity_history) > 100: self.equity_history.pop(0)
+
+                # Check Max Drawdown limit
+                self.risk_manager.update_equity_high(total_equity)
+                if self.risk_manager.check_max_drawdown(total_equity):
+                    print("[ALERTA] Limite Max Drawdown atingido! Cooldown ativado.")
+
                 # TIER 1: PORTFOLIO
                 if self.positions or self.usdt_balance > 0.01:
                     print(f"| [PORTFOLIO] Ativos em Carteira:                                        |")
@@ -697,22 +710,30 @@ class MulticoreMasterBot:
                             pnl = ((current_price / pos['entry']) - 1) * pos['signal']
                             exit_reason = None
                             
-                            # Use dynamic TP/SL
-                            current_tp = self.take_profit * pos.get('tp_mult', 1.0)
-                            current_sl = self.stop_loss * pos.get('sl_mult', 1.0)
+                            # ML Signal logic
+                            ml_signal_str = 'HOLD'
+                            if signal == -pos['signal'] and prob >= 0.75:
+                                ml_signal_str = 'REVERSAL'
+
+                            pos_id = pos.get('id', f"{pos['time']}_{pos['entry']}")
                             
-                            if pnl > self.trailing_activation:
-                                if 'max_pnl' not in pos: pos['max_pnl'] = pnl
-                                else: pos['max_pnl'] = max(pos['max_pnl'], pnl)
-                                if pnl < (pos['max_pnl'] - self.trailing_callback):
-                                    exit_reason = f"TRAILING STOP ({pos['max_pnl']:.2%})"
-                            
-                            if not exit_reason:
-                                if pnl >= current_tp: exit_reason = "TAKE PROFIT"
-                                elif pnl <= -current_sl: exit_reason = "STOP LOSS"
-                                elif signal == -pos['signal'] and prob >= 0.75: exit_reason = "REVERSAL"
+                            # Intercept with Risk Manager
+                            action, risk_reason = self.risk_manager.check_exit_conditions(
+                                asset=asset,
+                                pos_id=pos_id,
+                                current_price=current_price,
+                                entry_price=pos['entry'],
+                                signal_direction=pos['signal'],
+                                ml_signal=ml_signal_str
+                            )
+
+                            if action == 'SELL' or risk_reason:
+                                exit_reason = risk_reason or action
+                            elif ml_signal_str == 'REVERSAL':
+                                exit_reason = "REVERSAL"
 
                             if exit_reason:
+                                self.risk_manager.cleanup_tracking(asset, pos_id)
                                 if asset == "BTCBRL": # Cascade Exit for XAUT
                                     with self.xaut_lock:
                                         self.xaut_positions = [] # Simplified for demo
@@ -736,7 +757,11 @@ class MulticoreMasterBot:
 
                         # --- B. Entries & DCA (Decision Gate) ---
                         max_dca = 2 if asset == "BTCBRL" else 1
-                        if signal != 0 and len(self.positions[asset]) < max_dca:
+
+                        # Block new entries if in cooldown
+                        in_cooldown = self.risk_manager.is_in_cooldown()
+
+                        if signal != 0 and len(self.positions[asset]) < max_dca and not in_cooldown:
                             decision, agent_reason, smodifiers = self.agent.assess_trade(asset, signal, prob, reason)
                             
                             if decision == "APPROVE" and (agent_res['decision'] == "EXECUTE_ALPHA" or signal == 0):

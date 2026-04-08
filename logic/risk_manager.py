@@ -1,78 +1,209 @@
-# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
+import os
+import argparse
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.theme import Theme
+
+# Load env variables first
+load_dotenv()
+
+# Setup rich console for styled output
+custom_theme = Theme({
+    "info": "dim cyan",
+    "warning": "yellow",
+    "danger": "bold red"
+})
+console = Console(theme=custom_theme)
+
 class RiskManager:
-    def __init__(self, initial_balance=10000):
-        self.initial_balance = initial_balance
-        self.balance = initial_balance
-        self.hwm = initial_balance
-        self.max_drawdown = 0
+    """
+    RiskManager: Intercepts ML decisions and enforces hard safety limits.
+    Configurable via CLI arguments and .env.
+    """
+    def __init__(self):
+        self._parse_config()
+        self.cooldown_until = None
 
-    def calculate_pair_position(self, btc_price, eth_price, risk_fraction=0.10):
-        """
-        Aloca uma fracao do capital total para o trade de pares (50/50 entre ativos).
-        Isto garante neutralidade ao mercado (Hedge).
-        """
-        trade_capital = self.balance * risk_fraction
-        
-        # 50% para cada perna
-        btc_size = (trade_capital / 2) / btc_price
-        eth_size = (trade_capital / 2) / eth_price
-        
-        return btc_size, eth_size
+        # Ensure log directory exists
+        os.makedirs("results", exist_ok=True)
+        self.log_file = "results/risk_audit.log"
 
-    def calculate_pnl_with_fees(self, entry_price, exit_price, qty, is_short=False):
-        """
-        Simulando a execucao via Limit Orders (Maker Fee).
-        Vamos assumir a taxa VIP 0/Promocional para Maker (0.05%)
-        """
-        fee_rate = 0.0005 # 0.05% por ordem executada no book
-        entry_value = entry_price * qty
-        exit_value = exit_price * qty
+        # Cooldown period (in hours)
+        self.cooldown_hours = 24
+
+    def _parse_config(self):
+        """Parse configuration combining CLI args and .env"""
+        parser = argparse.ArgumentParser(description="BTC Bot with Risk Management")
         
-        fee = (entry_value * fee_rate) + (exit_value * fee_rate)
+        # Risk specific arguments
+        parser.add_argument("--stop-loss", type=float, default=None,
+                            help="Percentage to trigger an immediate sell (e.g., 0.02 for 2%)")
+        parser.add_argument("--take-profit", type=float, default=None,
+                            help="Target percentage to lock in gains (e.g., 0.03 for 3%)")
+        parser.add_argument("--trailing-stop", type=float, default=None,
+                            help="Dynamic stop-loss percentage that follows price action upwards")
+        parser.add_argument("--max-drawdown", type=float, default=None,
+                            help="Daily account-wide drawdown limit to stop the bot for 24h")
+        parser.add_argument("--mode", choices=['aggressive', 'conservative', 'manual-override'], default=None,
+                            help="Risk mode")
+
+        # Parse known args so we don't break if other parts of the app use argparse
+        args, _ = parser.parse_known_args()
         
-        if is_short:
-            gross_pnl = entry_value - exit_value
-        else:
-            gross_pnl = exit_value - entry_value
+        # Set values: CLI > ENV > Default
+        self.stop_loss = args.stop_loss if args.stop_loss is not None else float(os.getenv("RISK_STOP_LOSS", "0.015"))
+        self.take_profit = args.take_profit if args.take_profit is not None else float(os.getenv("RISK_TAKE_PROFIT", "0.03"))
+        self.trailing_stop = args.trailing_stop if args.trailing_stop is not None else float(os.getenv("RISK_TRAILING_STOP", "0.005"))
+        self.max_drawdown = args.max_drawdown if args.max_drawdown is not None else float(os.getenv("RISK_MAX_DRAWDOWN", "0.05"))
+        self.mode = args.mode if args.mode is not None else os.getenv("RISK_MODE", "conservative")
+
+        # Tracking peak prices for trailing stop: { "asset": { "pos_id": peak_price } }
+        self.peak_prices = {}
+
+        # Tracking daily peak equity for max drawdown
+        self.daily_peak_equity = None
+        self.last_equity_reset = datetime.now().date()
+
+    def _log_audit(self, message):
+        """Log risk events to audit file"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"[{timestamp}] {message}\n"
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+
+    def _trigger_cooldown(self, reason):
+        """Trigger mandatory cooldown period"""
+        self.cooldown_until = datetime.now() + timedelta(hours=self.cooldown_hours)
+        msg = f"[RISK] Mandatory cooldown triggered for {self.cooldown_hours}h. Reason: {reason}"
+        console.print(msg, style="danger")
+        self._log_audit(msg)
+
+    def is_in_cooldown(self):
+        """Check if bot is in a cooldown period"""
+        if self.cooldown_until and datetime.now() < self.cooldown_until:
+            return True
+        elif self.cooldown_until and datetime.now() >= self.cooldown_until:
+            # Cooldown expired
+            self.cooldown_until = None
+            msg = "[RISK] Cooldown period has ended. Resuming normal operations."
+            console.print(msg, style="info")
+            self._log_audit(msg)
+            return False
+        return False
+
+    def update_equity_high(self, current_equity):
+        """Update daily peak equity for max drawdown checks"""
+        # Reset daily peak on a new day
+        current_date = datetime.now().date()
+        if current_date > self.last_equity_reset:
+            self.daily_peak_equity = current_equity
+            self.last_equity_reset = current_date
+            return
+
+        if self.daily_peak_equity is None or current_equity > self.daily_peak_equity:
+            self.daily_peak_equity = current_equity
+
+    def check_max_drawdown(self, current_equity):
+        """Check if daily max drawdown limit is hit"""
+        if self.daily_peak_equity is None:
+            return False
+
+        drawdown = (self.daily_peak_equity - current_equity) / self.daily_peak_equity
+        if drawdown >= self.max_drawdown:
+            reason = f"Max Drawdown Hit: {drawdown*100:.2f}% (Limit: {self.max_drawdown*100:.2f}%)"
+            self._trigger_cooldown(reason)
+            return True
+
+        return False
+
+    def check_exit_conditions(self, asset, pos_id, current_price, entry_price, signal_direction, ml_signal='HOLD'):
+        """
+        Check hard risk limits against current position.
+        Overrides ML signal if necessary.
+
+        Args:
+            asset: Symbol name (e.g., BTCBRL)
+            pos_id: Unique identifier for the position (to track trailing stops)
+            current_price: Current market price
+            entry_price: Price the position was opened at
+            signal_direction: 1 for long, -1 for short
+            ml_signal: The signal proposed by the ML model ('BUY', 'SELL', 'HOLD')
+
+        Returns:
+            str: Action to take ('SELL' if risk triggered, otherwise ml_signal)
+            str: Reason for the action
+        """
+        # Ensure asset is initialized in peak tracking
+        if asset not in self.peak_prices:
+            self.peak_prices[asset] = {}
+
+        # Initialize peak price for this position if not exists
+        if pos_id not in self.peak_prices[asset]:
+            self.peak_prices[asset][pos_id] = current_price
+
+        # Update peak price if moving in favorable direction
+        if signal_direction == 1: # Long
+            if current_price > self.peak_prices[asset][pos_id]:
+                self.peak_prices[asset][pos_id] = current_price
+        else: # Short
+            if current_price < self.peak_prices[asset][pos_id]:
+                self.peak_prices[asset][pos_id] = current_price
+
+        peak_price = self.peak_prices[asset][pos_id]
+        
+        # Calculate current PnL percentage
+        pnl_pct = ((current_price / entry_price) - 1) * signal_direction
+        
+        # 1. Check Stop Loss
+        if pnl_pct <= -self.stop_loss:
+            msg = f"[RISK] Stop-Loss triggered at {pnl_pct*100:.2f}%. Overriding ML '{ml_signal}' signal."
+            console.print(msg, style="danger")
+            self._log_audit(msg)
+            # Remove from tracking
+            del self.peak_prices[asset][pos_id]
+            return "SELL", "HARD_STOP_LOSS"
             
-        return gross_pnl - fee
-
-    def calculate_drawdown(self, current_balance):
-        if current_balance > self.hwm:
-            self.hwm = current_balance
+        # 2. Check Trailing Stop
+        # Calculate pullback from peak
+        pullback_pct = ((current_price / peak_price) - 1) * signal_direction
         
-        drawdown = (self.hwm - current_balance) / self.hwm
-        if drawdown > self.max_drawdown:
-            self.max_drawdown = drawdown
+        # Only activate trailing stop if we are in profit
+        if pnl_pct > 0 and pullback_pct <= -self.trailing_stop:
+            msg = f"[RISK] Trailing Stop triggered. Peak: {peak_price:.2f}, Current: {current_price:.2f}, Drop: {pullback_pct*100:.2f}%. Overriding ML '{ml_signal}' signal."
+            console.print(msg, style="warning")
+            self._log_audit(msg)
+            # Remove from tracking
+            del self.peak_prices[asset][pos_id]
+            return "SELL", "TRAILING_STOP"
 
-    def check_liquidation_risk(self, entry_price, current_price, leverage=1.0):
+        # 3. Check Take Profit
+        if pnl_pct >= self.take_profit:
+            msg = f"[RISK] Take-Profit reached at {pnl_pct*100:.2f}%. Overriding ML '{ml_signal}' signal."
+            console.print(msg, style="info")
+            self._log_audit(msg)
+            # Remove from tracking
+            del self.peak_prices[asset][pos_id]
+            return "SELL", "TAKE_PROFIT"
+
+        return ml_signal, None
+
+    def cleanup_tracking(self, asset, pos_id):
+        """Remove tracking for closed positions"""
+        if asset in self.peak_prices and pos_id in self.peak_prices[asset]:
+            del self.peak_prices[asset][pos_id]
+
+    def check_liquidation_risk(self, entry_price, current_price, leverage):
         """
-        Monitora o risco de liquidacao da perna Short.
+        Check liquidation risk distance for margin/futures trades.
+        Returns (distance_pct, liquidation_price).
         """
-        # COIN-M (Inverse) Short 1x: O risco de liquidacao e matematicamente zero 
-        # porque o valor do colateral (BTC) sobe junto com o prejuizo do Short.
         if leverage <= 1.0:
-            return 1.0, 999999999 # Distancia infinita, Preco de liq inalcancavel
+            return 1.0, 999999999
             
-        liquidation_price = entry_price * (leverage / (leverage - 1))
-        distance = (liquidation_price - current_price) / current_price
-        return distance, liquidation_price
+        # Simplified long liquidation formula: Liquidation Price = Entry Price * (Leverage / (Leverage - 1))
+        # Note: Short liquidation price would be: Entry Price * (Leverage / (Leverage + 1))
+        liq_price = entry_price * (leverage / (leverage - 1))
 
-    def calculate_coin_m_pnl(self, entry_price, exit_price, qty_usd):
-        """
-        Calcula o P&L de um contrato Inverse (COIN-M).
-        Formula: Qty_USD * (1/Entry - 1/Exit)
-        Retorna o lucro no ATIVO (ex: em BTC).
-        """
-        if entry_price == 0 or exit_price == 0: return 0
-        pnl_asset = qty_usd * (1/entry_price - 1/exit_price)
-        return pnl_asset
-
-    def rebalance_margin(self, spot_balance, futures_margin, threshold=0.10):
-        """
-        Transfere lucro do Spot para Futuros para afastar a liquidacao.
-        """
-        if spot_balance > futures_margin * (1 + threshold):
-            transfer = (spot_balance - futures_margin) / 2
-            return transfer
-        return 0
+        distance = (liq_price - current_price) / current_price
+        return max(0.0, distance), liq_price
