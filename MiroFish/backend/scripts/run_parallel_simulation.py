@@ -689,6 +689,7 @@ def fetch_new_actions_from_db(
         
         raw_actions = []
         quote_post_ids = set()
+        post_ids_to_fetch = set()
 
         for rowid, user_id, action, info_json in cursor.fetchall():
             # 更新最大 rowid
@@ -733,6 +734,21 @@ def fetch_new_actions_from_db(
                 new_post_id = simplified_args.get('new_post_id')
                 if new_post_id:
                     quote_post_ids.add(new_post_id)
+                quoted_id = simplified_args.get('quoted_id')
+                if quoted_id:
+                    post_ids_to_fetch.add(quoted_id)
+
+            if action_type in ('LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT'):
+                post_id = simplified_args.get('post_id')
+                if post_id:
+                    post_ids_to_fetch.add(post_id)
+
+            if action_type == 'REPOST':
+                new_post_id = simplified_args.get('new_post_id')
+                if new_post_id:
+                    # For REPOST, we actually need the original_post_id of this new_post_id
+                    # Let's just collect the new_post_id for now and resolve it later
+                    pass
             
             raw_actions.append({
                 'agent_id': user_id,
@@ -757,10 +773,62 @@ def fetch_new_actions_from_db(
                     if row[1]:  # quote_content is not None/empty
                         quote_contents_map[row[0]] = row[1]
 
+        # 批量查询 post_info 解决 N+1 问题
+        post_info_cache = {}
+
+        # Resolve REPOST original_post_ids
+        repost_new_post_ids = [
+            action['action_args'].get('new_post_id')
+            for action in raw_actions
+            if action['action_type'] == 'REPOST' and action['action_args'].get('new_post_id')
+        ]
+        if repost_new_post_ids:
+            chunk_size = 900
+            for i in range(0, len(repost_new_post_ids), chunk_size):
+                chunk = repost_new_post_ids[i:i + chunk_size]
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT original_post_id FROM post WHERE post_id IN ({placeholders})
+                """, chunk)
+                for row in cursor.fetchall():
+                    if row[0]:
+                        post_ids_to_fetch.add(row[0])
+
+        if post_ids_to_fetch:
+            chunk_size = 900
+            post_ids_list = list(post_ids_to_fetch)
+
+            for i in range(0, len(post_ids_list), chunk_size):
+                chunk = post_ids_list[i:i + chunk_size]
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT p.post_id, p.content, p.user_id, u.agent_id, u.name, u.user_name
+                    FROM post p
+                    LEFT JOIN user u ON p.user_id = u.user_id
+                    WHERE p.post_id IN ({placeholders})
+                """, chunk)
+
+                for row in cursor.fetchall():
+                    p_id = row[0]
+                    content = row[1] or ''
+                    user_id = row[2]
+                    agent_id = row[3]
+                    u_name = row[4]
+                    u_user_name = row[5]
+
+                    author_name = ''
+                    if agent_id is not None and agent_id in agent_names:
+                        author_name = agent_names[agent_id]
+                    elif user_id:
+                        # Fetch or use cached user name
+                        author_name = u_name or u_user_name or ''
+
+                    post_info_cache[p_id] = {'content': content, 'author_name': author_name}
+
         user_names_cache = {}
         for action_data in raw_actions:
             # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_data['action_type'], action_data['action_args'], agent_names, quote_contents_map, user_names_cache)
+            _enrich_action_context(cursor, action_data['action_type'], action_data['action_args'], agent_names, quote_contents_map, user_names_cache, post_info_cache)
 
             actions.append(action_data)
         
@@ -777,7 +845,8 @@ def _enrich_action_context(
     action_args: Dict[str, Any],
     agent_names: Dict[int, str],
     quote_contents_map: Optional[Dict[int, str]] = None,
-    user_names_cache: Optional[Dict[int, str]] = None
+    user_names_cache: Optional[Dict[int, str]] = None,
+    post_info_cache: Optional[Dict[int, Dict[str, str]]] = None
 ) -> None:
     """
     为动作补充上下文信息（帖子内容、用户名等）
@@ -795,7 +864,7 @@ def _enrich_action_context(
         if action_type in ('LIKE_POST', 'DISLIKE_POST'):
             post_id = action_args.get('post_id')
             if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache)
+                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache, post_info_cache)
                 if post_info:
                     action_args['post_content'] = post_info.get('content', '')
                     action_args['post_author_name'] = post_info.get('author_name', '')
@@ -811,7 +880,7 @@ def _enrich_action_context(
                 row = cursor.fetchone()
                 if row and row[0]:
                     original_post_id = row[0]
-                    original_info = _get_post_info(cursor, original_post_id, agent_names, user_names_cache)
+                    original_info = _get_post_info(cursor, original_post_id, agent_names, user_names_cache, post_info_cache)
                     if original_info:
                         action_args['original_content'] = original_info.get('content', '')
                         action_args['original_author_name'] = original_info.get('author_name', '')
@@ -822,7 +891,7 @@ def _enrich_action_context(
             new_post_id = action_args.get('new_post_id')
             
             if quoted_id:
-                original_info = _get_post_info(cursor, quoted_id, agent_names, user_names_cache)
+                original_info = _get_post_info(cursor, quoted_id, agent_names, user_names_cache, post_info_cache)
                 if original_info:
                     action_args['original_content'] = original_info.get('content', '')
                     action_args['original_author_name'] = original_info.get('author_name', '')
@@ -877,7 +946,7 @@ def _enrich_action_context(
         elif action_type == 'CREATE_COMMENT':
             post_id = action_args.get('post_id')
             if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache)
+                post_info = _get_post_info(cursor, post_id, agent_names, user_names_cache, post_info_cache)
                 if post_info:
                     action_args['post_content'] = post_info.get('content', '')
                     action_args['post_author_name'] = post_info.get('author_name', '')
@@ -891,7 +960,8 @@ def _get_post_info(
     cursor,
     post_id: int,
     agent_names: Dict[int, str],
-    user_names_cache: Optional[Dict[int, str]] = None
+    user_names_cache: Optional[Dict[int, str]] = None,
+    post_info_cache: Optional[Dict[int, Dict[str, str]]] = None
 ) -> Optional[Dict[str, str]]:
     """
     获取帖子信息
@@ -905,6 +975,9 @@ def _get_post_info(
     Returns:
         包含 content 和 author_name 的字典，或 None
     """
+    if post_info_cache is not None and post_id in post_info_cache:
+        return post_info_cache[post_id]
+
     try:
         cursor.execute("""
             SELECT p.content, p.user_id, u.agent_id
@@ -926,9 +999,15 @@ def _get_post_info(
                 # 从 user 表获取名称
                 author_name = _get_user_name(cursor, user_id, agent_names, user_names_cache) or ''
             
-            return {'content': content, 'author_name': author_name}
+            result = {'content': content, 'author_name': author_name}
+            if post_info_cache is not None:
+                post_info_cache[post_id] = result
+            return result
     except Exception:
         pass
+
+    if post_info_cache is not None:
+        post_info_cache[post_id] = None
     return None
 
 
