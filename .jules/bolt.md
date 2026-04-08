@@ -11,3 +11,9 @@
 **Learning:** Found multiple places in strategy logic where single-row access via `df.iloc[-1]` or `df.iloc[row_idx]` is significantly slower than bypassing Pandas to index the underlying NumPy arrays directly via `df.values[-1]`. Additionally, when translating `.get('column', default)` onto arrays it must be rewritten safely as `df['column'].values[-1] if 'column' in df.columns else default`.
 **Action:** Always prefer indexing the underlying numpy arrays over `.iloc` for scalar or single-row extractions in high-frequency/latency-sensitive logic. Always explicitly cast extracted NumPy scalar types to native Python types like `float()` to prevent downstream type or serialization errors.
  
+
+## 2024-05-24 - DataEngine Caching and DataFrame Mutability
+
+**Learning:** When implementing an in-memory cache that returns complex data structures like Pandas DataFrames, returning a reference to the cached object can lead to unintended mutations if downstream functions modify the DataFrame (e.g. adding indicator columns).
+
+**Action:** Always return `df.copy()` from the cache to ensure that caller functions receive an isolated instance, preserving the integrity of the underlying cached data.

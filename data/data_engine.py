@@ -13,6 +13,7 @@ class DataEngine:
         self.interval = interval
         self.funding_url = "https://fapi.binance.com/fapi/v1/fundingRate"
         self.dapi_url = "https://dapi.binance.com/dapi/v1"
+        self._klines_cache = {}
 
     def fetch_delivery_klines(self, symbol, interval="1h", limit=1000):
         """
@@ -223,6 +224,14 @@ class DataEngine:
         """
         Fetches historical klines from Binance Spot API including Taker Volume.
         """
+        cache_key = f"{symbol}_{interval}_{limit}"
+        now = time.time()
+        if cache_key in self._klines_cache:
+            cache_time, cached_df = self._klines_cache[cache_key]
+            if now - cache_time < 15:
+                # print(f"Using cached Binance Klines for {symbol}...")
+                return cached_df.copy()
+
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         print(f"Fetching Binance Klines for {symbol}...")
@@ -250,7 +259,8 @@ class DataEngine:
             df['delta'] = df['buy_vol'] - df['sell_vol']
             df['CVD'] = df['delta'].cumsum()
             
-            return df
+            self._klines_cache[cache_key] = (time.time(), df)
+            return df.copy()
         except Exception as e:
             print(f"Error fetching Binance Klines: {e}")
             return pd.DataFrame()
