@@ -130,11 +130,11 @@ class BacktestEngine(BaseExchange):
                 }
                 self.trade_history.append(trade_record)
 
-    def get_balance(self, asset: str = 'BRL') -> float:
+    async def get_balance(self, asset: str = 'BRL') -> float:
         with self.lock:
             return self.balances.get(asset, 0.0)
 
-    def create_order(self, symbol: str, side: str, order_type: str, quantity: float, **kwargs: Any) -> Dict[str, Any]:
+    async def create_order(self, symbol: str, side: str, order_type: str, quantity: float, **kwargs: Any) -> Dict[str, Any]:
         with self.lock:
             order_id = str(uuid.uuid4())
             order = {
@@ -162,21 +162,21 @@ class BacktestEngine(BaseExchange):
 
             return order
 
-    def cancel_order(self, symbol: str, order_id: str, **kwargs: Any) -> Dict[str, Any]:
+    async def cancel_order(self, symbol: str, order_id: str, **kwargs: Any) -> Dict[str, Any]:
         with self.lock:
             if order_id in self.active_orders:
                 del self.active_orders[order_id]
                 return {'symbol': symbol, 'orderId': order_id, 'status': 'CANCELED'}
             return {'symbol': symbol, 'orderId': order_id, 'status': 'NOT_FOUND'}
 
-    def get_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
         with self.lock:
             if self.data is not None and len(self.data) > 0:
                 price = float(self.data.iloc[self.current_index]['close'])
                 return {'symbol': symbol, 'price': str(price)}
             return {'symbol': symbol, 'price': '0.0'}
 
-    def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+    async def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         # Mocking generic Binance symbol info
         return {
             'symbol': symbol,

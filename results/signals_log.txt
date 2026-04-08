@@ -17,3 +17,4 @@
 [12:00:00] COMPRA USDT: Test Reason | Preco: 50000.00 | Qtd: 0.01
 [12:00:00] COMPRA USDT: Test Reason | Preco: 50000.00 | Qtd: 0.01
 [12:00:00] COMPRA USDT: Test Reason | Preco: 50000.00 | Qtd: 0.01
+[12:00:00] COMPRA USDT: Test Reason | Preco: 50000.00 | Qtd: 0.01

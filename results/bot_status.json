@@ -1,14 +1,14 @@
 {
-    "timestamp": "2026-04-08 12:22:51",
-    "balance": 1234.56,
-    "usdt_balance": 0.0,
-    "trade_amount": 100.0,
-    "sentiment": {
-        "sentiment": "Neutral",
-        "confidence": 0.5,
-        "updated": ""
-    },
-    "positions": {},
-    "xaut_positions": [],
-    "xaut_pos_counter": 0
+  "timestamp": "2026-04-08 12:43:00",
+  "balance": 1234.56,
+  "usdt_balance": 0.00740736,
+  "trade_amount": 100.0,
+  "sentiment": {
+    "sentiment": "Neutral",
+    "confidence": 0.5,
+    "updated": ""
+  },
+  "positions": {},
+  "xaut_positions": [],
+  "xaut_pos_counter": 0
 }
