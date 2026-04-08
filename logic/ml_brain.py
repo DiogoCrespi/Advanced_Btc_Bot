@@ -22,37 +22,21 @@ class MLBrain:
 
     def prepare_features(self, df):
         """
-        Gera features normalizadas e delta de indicadores.
+        Ingestão Dinâmica refatorada (PR #49).
+        Múltiplos timeframes (MACD, BB, RSI) já entram prefixados nativamente por DataEngine.
+        Isso empodera o Random Forest a cruzar médias móveis sem viés humano.
         """
         df = df.copy()
         
-        # Features Distancia (Relative to Price)
-        df['feat_dist_sma50'] = (df['close'] / df['SMA_50']) - 1
-        df['feat_dist_ema21'] = (df['close'] / df['EMA_21']) - 1
-        
-        # Momentum e Forca
-        df['feat_rsi'] = df['RSI_14'] / 100
-        df['feat_returns'] = df['Log_Returns']
-        
-        # Volatilidade (Standard Deviation of returns) - Proxy para Vol
-        df['feat_volatility'] = df['Log_Returns'].rolling(window=14).std()
-        
-        # Slopes (Vectorized using .diff() for speed)
-        df['feat_slope_sma50'] = df['SMA_50'].diff(5) / df['SMA_50']
-        df['feat_slope_ema21'] = df['EMA_21'].diff(5) / df['EMA_21']
-        
-        # Order Flow Metrics (Se disponiveis)
-        df['feat_cvd_div']  = df.get('cvd_div', 0)
-        df['feat_sweep_high'] = df.get('sweep_high', 0)
-        df['feat_sweep_low']  = df.get('sweep_low', 0)
-        
-        # Macro Risk (Novo!)
         df['feat_macro_risk'] = df.get('macro_risk', 0.5)
-        
-        # Fluxo de Capital - Bitcoin Dominance (Novo!)
         df['feat_btc_dominance'] = df.get('btc_dominance', 50.0)
         
-        # Limpeza: Dropamos NaNs (provenientes do rolling) para evitar Crash na RF
+        # Order Flow opcional
+        if 'cvd_div' in df.columns: df['feat_cvd_div'] = df['cvd_div']
+        if 'sweep_high' in df.columns: df['feat_sweep_high'] = df['sweep_high']
+        if 'sweep_low' in df.columns: df['feat_sweep_low'] = df['sweep_low']
+        
+        # Dropamos NaNs surgidos das maiores janelas de Média Móvel (e.g. BB 1D = 480 periods)
         return df.dropna()
 
     def create_labels(self, df, tp=0.015, sl=0.008, horizon=24):

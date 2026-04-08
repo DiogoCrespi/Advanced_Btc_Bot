@@ -354,33 +354,52 @@ class DataEngine:
         high_col = 'high' if 'high' in df.columns else 'High'
         low_col = 'low' if 'low' in df.columns else 'Low'
 
-        # Log Returns
-        df['Log_Returns'] = np.log(df[close_col] / df[close_col].shift(1))
-        
-        # Moving Averages
-        df['SMA_50'] = df[close_col].rolling(window=50).mean()
-        df['EMA_21'] = df[close_col].ewm(span=21, adjust=False).mean()
-        
-        # RSI
-        delta = df[close_col].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI_14'] = 100 - (100 / (1 + rs))
-        
-        # MACD (12, 26, 9)
-        ema_12 = df[close_col].ewm(span=12, adjust=False).mean()
-        ema_26 = df[close_col].ewm(span=26, adjust=False).mean()
-        df['MACD'] = ema_12 - ema_26
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        # Base Features (Log Returns)
+        df['feat_returns'] = np.log(df[close_col] / df[close_col].shift(1))
 
-        # Bollinger Bands (20, 2)
-        sma_20 = df[close_col].rolling(window=20).mean()
-        std_20 = df[close_col].rolling(window=20).std()
-        df['BB_Upper'] = sma_20 + (std_20 * 2)
-        df['BB_Lower'] = sma_20 - (std_20 * 2)
-        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / sma_20
+        def add_macd(dt, cl, f, s, sig, suf):
+            ema_f = dt[cl].ewm(span=f, adjust=False).mean()
+            ema_s = dt[cl].ewm(span=s, adjust=False).mean()
+            macd = ema_f - ema_s
+            sv = macd.ewm(span=sig, adjust=False).mean()
+            dt[f'feat_macd{suf}'] = macd
+            dt[f'feat_macd_h{suf}'] = macd - sv
+            dt[f'feat_macd_s{suf}'] = sv
+
+        def add_bb(dt, cl, l, std_val, suf):
+            sma = dt[cl].rolling(window=l).mean()
+            dev = dt[cl].rolling(window=l).std()
+            u = sma + (dev * std_val)
+            lw = sma - (dev * std_val)
+            dt[f'feat_bb_u{suf}'] = u
+            dt[f'feat_bb_m{suf}'] = sma
+            dt[f'feat_bb_l{suf}'] = lw
+            dt[f'feat_bb_dist_pct{suf}'] = (dt[cl] - lw) / (u - lw)
+
+        def add_rsi(dt, cl, l, suf):
+            delta = dt[cl].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=l).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=l).mean()
+            rs = gain / loss
+            dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
+
+        # 1H Base Features
+        add_macd(df, close_col, 12, 26, 9, '')
+        add_bb(df, close_col, 20, 2, '')
+        add_rsi(df, close_col, 14, '')
+
+        # 4H Emulated (Multiplicador x4)
+        add_macd(df, close_col, 12*4, 26*4, 9*4, '_4h')
+        add_bb(df, close_col, 20*4, 2, '_4h')
+        add_rsi(df, close_col, 14*4, '_4h')
+
+        # 1D Emulated (Multiplicador x24)
+        add_macd(df, close_col, 12*24, 26*24, 9*24, '_1d')
+        add_bb(df, close_col, 20*24, 2, '_1d')
+        add_rsi(df, close_col, 14*24, '_1d')
+
+        # Mantendo retrocompatibilidade para partes do bot que exibem 'RSI_14' logado
+        df['RSI_14'] = df['feat_rsi']
         
         return df
 
