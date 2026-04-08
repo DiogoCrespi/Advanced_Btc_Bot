@@ -125,7 +125,7 @@ class ScannerCofreHibrido:
         )
         try:
             requests.post(
-                "http://100.86.220.116:8081/btc_cofre_alerts",
+                "https://100.86.220.116:8081/btc_cofre_alerts",
                 data=mensagem.encode('utf-8'),
                 headers={"Title": titulo, "Tags": "rocket,moneybag", "Priority": "high"}
             )
