@@ -196,7 +196,7 @@ class MulticoreMasterBot:
         try:
             asset_info = self.client.get_asset_balance(asset=asset)
             return float(asset_info['free']) if asset_info else 0.0
-        except:
+        except Exception:
             return self.balance # fallback
             
     def format_quantity(self, asset, raw_qty):
@@ -211,7 +211,7 @@ class MulticoreMasterBot:
             if step_size:
                 precision = int(round(-math.log(step_size, 10), 0))
                 return math.floor(raw_qty * (10**precision)) / (10**precision)
-        except: pass
+        except Exception: pass
         return round(raw_qty, 5)
 
     def load_balance(self):
@@ -219,7 +219,7 @@ class MulticoreMasterBot:
             try:
                 with open(self.balance_file, "r") as f:
                     return float(f.read().strip())
-            except: pass
+            except Exception: pass
         return 1000.0
 
     def _log_worker(self):
@@ -563,7 +563,7 @@ class MulticoreMasterBot:
                 try:
                     usdt_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.0
                     total_equity += self.usdt_balance * usdt_price
-                except: total_equity += self.usdt_balance * 5.0
+                except Exception: total_equity += self.usdt_balance * 5.0
 
                 with self.pos_lock:
                     for p_asset, p_list in self.positions.items():
@@ -603,7 +603,7 @@ class MulticoreMasterBot:
                         if self.usdt_balance > 0.01:
                             try:
                                 u_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.20
-                            except: u_price = 5.20
+                            except Exception: u_price = 5.20
                             u_val = self.usdt_balance * u_price
                             print(f"|    USDTBRL   : {self.usdt_balance:10.6f} COMPRA | Valor: R$ {u_val:8.2f} | PnL:  0.00% |")
                     print(f"+--------------------------------------------------------------------------------+")
