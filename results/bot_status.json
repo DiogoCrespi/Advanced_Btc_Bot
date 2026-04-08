@@ -1,12 +1,12 @@
 {
-    "timestamp": "2026-04-08 11:23:51",
+    "timestamp": "2026-04-08 11:28:30",
     "balance": 1234.56,
-    "usdt_balance": 0.02,
-    "trade_amount": 500.0,
+    "usdt_balance": 0.0,
+    "trade_amount": 100.0,
     "sentiment": {
         "sentiment": "Neutral",
         "confidence": 0.5,
-        "updated": "2026-04-02 10:30:00"
+        "updated": ""
     },
     "positions": {},
     "xaut_positions": [],
