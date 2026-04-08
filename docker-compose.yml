@@ -27,8 +27,10 @@ services:
     container_name: btc_multicore_bot
     restart: unless-stopped
     depends_on:
-      - mirofish-backend
-      - neo4j
+      mirofish-backend:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
     environment:
       - MIROFISH_API_URL=http://mirofish-backend:8000/api
       - BINANCE_API_KEY=${BINANCE_API_KEY}
@@ -51,6 +53,11 @@ services:
       - "7687:7687" # Bolt Driver
     environment:
       - NEO4J_AUTH=neo4j/password
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - ./data/neo4j:/data
       - ./data/neo4j/logs:/logs

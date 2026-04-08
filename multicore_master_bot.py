@@ -41,6 +41,76 @@ from logic.risk_manager import RiskManager
 # Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
 
+import logging
+
+class WebSocketSupervisor:
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.logger = logging.getLogger("Supervisor")
+        self._is_running = True
+        self._backoff_delay = 1  # Segundos iniciais
+
+    async def start(self):
+        """Task principal que supervisiona a vida do WebSocket."""
+        while self._is_running:
+            try:
+                self.logger.info("[SUPERVISOR] Iniciando conexão WebSocket...")
+                await self._run_socket_session()
+                # Se sair do _run_socket_session sem erro, resetamos o backoff
+                self._backoff_delay = 1
+            except Exception as e:
+                self.logger.error(f"[SUPERVISOR] Queda crítica no stream: {e}")
+                await self._handle_reconnection()
+
+    async def _run_socket_session(self):
+        """Gerencia a sessão ativa do socket."""
+        if not self.bot.client:
+            await asyncio.sleep(5)
+            raise Exception("Binance AsyncClient não inicializado")
+            
+        from binance import BinanceSocketManager
+        bm = BinanceSocketManager(self.bot.client)
+        # Multiplexando streams para eficiência
+        streams = [f"{s.lower()}@ticker" for s in self.bot.assets]
+        if "usdtbrl@ticker" not in streams:
+            streams.append("usdtbrl@ticker") # Essencial manter para USDTBRL logic
+        
+        async with bm.multiplex_socket(streams) as stream:
+            while True:
+                # Timeout curto para o heartbeat não travar o loop
+                res = await asyncio.wait_for(stream.recv(), timeout=15)
+                
+                if res and 'data' in res:
+                    data = res['data']
+                    symbol = data['s']
+                    price = float(data['c'])
+                    
+                    # Atualiza o cache de preços do Bot
+                    self.bot.live_prices[symbol] = price
+                    self.bot.last_update_ts = data['E']
+                elif res and 'e' in res and res['e'] == '24hrTicker':
+                    symbol = res['s']
+                    self.bot.live_prices[symbol] = float(res['c'])
+                
+                # Reseta o backoff se a mensagem chegou com sucesso
+                self._backoff_delay = 1
+
+    async def _handle_reconnection(self):
+        """Implementa Exponential Backoff para evitar IP Ban."""
+        # Invalidamos os preços para impedir que o ML opere com dados 'estale' (mortos)
+        for s in self.bot.assets:
+            self.bot.live_prices[s] = 0.0
+        self.bot.live_prices["USDTBRL"] = 0.0
+        
+        wait_time = min(self._backoff_delay, 60) # Teto de 60 segundos
+        self.logger.warning(f"[SUPERVISOR] Tentando reconectar em {wait_time}s...")
+        
+        await asyncio.sleep(wait_time)
+        self._backoff_delay *= 2 # Dobra o tempo de espera para a próxima falha
+
+    def stop(self):
+        self._is_running = False
+
 def orjson_default(obj):
     """ Custom encoder default for numpy data types with orjson """
     if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
@@ -221,60 +291,7 @@ class MulticoreMasterBot:
         except Exception: pass
         return round(raw_qty, 5)
 
-    async def _process_stream(self):
-        """Consume multiplexed websocket messages to maintain real-time states."""
-        while True:
-            msg = await self.stream_queue.get()
-            self.last_ws_message_time = time.time()
-            if not msg:
-                continue
 
-            try:
-                # Handle multiplexed payloads
-                if 'data' in msg and 'stream' in msg:
-                    stream_name = msg['stream']
-                    data = msg['data']
-
-                    if 'e' in data and data['e'] == '24hrTicker':
-                        symbol = data['s']
-                        self.live_prices[symbol] = float(data['c'])
-                elif 'e' in msg and msg['e'] == '24hrTicker':
-                     symbol = msg['s']
-                     self.live_prices[symbol] = float(msg['c'])
-
-            except Exception as e:
-                print(f"[STREAM ERROR] Error processing message: {e}")
-            finally:
-                self.stream_queue.task_done()
-
-    async def _start_multiplex_socket(self):
-        """Initialize the BinanceSocketManager multiplex stream."""
-        if not self.client:
-            return
-
-        bsm = BinanceSocketManager(self.client)
-        streams = [f"{asset.lower()}@ticker" for asset in self.assets]
-        streams.append("usdtbrl@ticker")
-
-        async with bsm.multiplex_socket(streams) as ms:
-            print(f"[WEBSOCKET] Conectado aos streams: {streams}")
-            while True:
-                try:
-                    res = await ms.recv()
-                    await self.stream_queue.put(res)
-                except Exception as e:
-                    print(f"[WEBSOCKET ERROR] Connection dropped: {e}")
-                    break
-
-    async def _monitor_heartbeat(self):
-        """Monitors WS connection health and triggers silent reconnects."""
-        while True:
-            await asyncio.sleep(10)
-            if time.time() - self.last_ws_message_time > 30:
-                print("[HEARTBEAT] WebSocket timeout excedido (>30s). Tentando reconectar...")
-                # Note: For robust reconnections, we'd cancel the current socket task and restart it.
-                # Here we simulate by just logging it for now, relying on the loop inside ms.recv to break on real drop.
-                self.last_ws_message_time = time.time() # Reset to avoid spam
 
     def load_balance(self):
         if os.path.exists(self.balance_file):
@@ -613,6 +630,28 @@ class MulticoreMasterBot:
                 else: news_sent = 0.0
                 print(f"[MIROFISH] Analise de Sentimento Profundo: {m_sent} ({m_conf*100:.1f}%) | Score: {news_sent:.2f}")
                 
+                # Gatilho de Memória (Debounce / Throttle 1x por hora)
+                now = datetime.now()
+                current_hour = now.hour
+                
+                # Evita o 'Minute 00 Bias': a gravação só ocorre a partir do 1o minuto após a virada da hora, quando a alta quebra nos provedores de liquidez da exchange alivia
+                if getattr(self, '_last_ml_record_hour', None) != current_hour and now.minute >= 1:
+                    try:
+                        # Pega o preço do ativo primário pelo WebSocket cacheado
+                        btc_symbol = self.assets[0] if self.assets else "BTCBRL"
+                        current_btc_price = self.live_prices.get(btc_symbol, 0.0)
+                        
+                        if current_btc_price > 0:
+                            self.memory.record_market_state(
+                                symbol=btc_symbol,
+                                price=current_btc_price,
+                                sentiment=news_sent
+                            )
+                            self._last_ml_record_hour = current_hour
+                            # print(f"[MEMÓRIA] Estado gravado no Neo4j (Sentimento vs Preço)")
+                    except Exception as e:
+                        print(f"[ERRO MEMÓRIA] Falha ao gravar log no Neo4j: {e}")
+                
                 self.macro_risk = self.agent.radar.get_macro_score(
                     macro_data.get('dxy_change', 0), 
                     macro_data.get('sp500_change', 0), 
@@ -908,13 +947,13 @@ async def main(bot):
     if bot.mode != "backtest" and hasattr(bot.exchange, 'initialize'):
         await bot.exchange.initialize()
 
+    supervisor = WebSocketSupervisor(bot)
+    
     # Start tasks
-    stream_task = asyncio.create_task(bot._process_stream())
-    ws_task = asyncio.create_task(bot._start_multiplex_socket())
-    heartbeat_task = asyncio.create_task(bot._monitor_heartbeat())
+    supervisor_task = asyncio.create_task(supervisor.start())
     main_loop_task = asyncio.create_task(bot.run_async())
 
-    await asyncio.gather(main_loop_task, stream_task, ws_task, heartbeat_task)
+    await asyncio.gather(main_loop_task, supervisor_task)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Advanced Multicore BTC Bot')

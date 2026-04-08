@@ -129,6 +129,32 @@ class MarketMemory:
         except Exception as e:
             print(f"[MEMORY] Erro ao gravar resultado: {e}")
 
+    def record_market_state(self, symbol: str, price: float, sentiment: float):
+        """
+        Registra especificamente o preco e sentimento atual para uso futuro de Machine Learning.
+        Garante que sempre tenhamos o snapshot temporal do MiroFish perfeitamente alinhado com OHLCV.
+        """
+        if not self.driver: return
+        
+        timestamp = datetime.now().isoformat()
+        
+        # Cypher: Cria no de MarketState puro (Preco + Setimento da AI)
+        query = """
+        CREATE (ms:MarketStateML {
+            symbol: $symbol,
+            price: $price,
+            sentiment: $sentiment,
+            timestamp: $ts,
+            date: date()
+        })
+        RETURN elementId(ms)
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query, symbol=symbol, price=price, sentiment=sentiment, ts=timestamp)
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar MarketState: {e}")
+
 if __name__ == "__main__":
     memory = MarketMemory()
     # Teste de gravacao

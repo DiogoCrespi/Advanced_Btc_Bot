@@ -368,6 +368,20 @@ class DataEngine:
         rs = gain / loss
         df['RSI_14'] = 100 - (100 / (1 + rs))
         
+        # MACD (12, 26, 9)
+        ema_12 = df[close_col].ewm(span=12, adjust=False).mean()
+        ema_26 = df[close_col].ewm(span=26, adjust=False).mean()
+        df['MACD'] = ema_12 - ema_26
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+
+        # Bollinger Bands (20, 2)
+        sma_20 = df[close_col].rolling(window=20).mean()
+        std_20 = df[close_col].rolling(window=20).std()
+        df['BB_Upper'] = sma_20 + (std_20 * 2)
+        df['BB_Lower'] = sma_20 - (std_20 * 2)
+        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / sma_20
+        
         return df
 
 if __name__ == "__main__":
