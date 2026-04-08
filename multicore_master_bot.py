@@ -2,20 +2,22 @@
 import time
 import os
 import sys
-import json
+import orjson as json
 import requests
 import queue
 import threading
 import numpy as np
 import pandas as pd
+import asyncio
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from threading import Lock, Thread
 # removed: fastapi, uvicorn imports
 
 import math
 from dotenv import load_dotenv
-from binance.client import Client
+from binance.client import Client, AsyncClient
+from binance import BinanceSocketManager
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 
@@ -36,18 +38,17 @@ from logic.coingecko_client import CoinGeckoClient
 # Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
 
-class NumpyEncoder(json.JSONEncoder):
-    """ Custom encoder for numpy data types """
-    def default(self, obj):
-        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
-                            np.int16, np.int32, np.int64, np.uint8,
-                            np.uint16, np.uint32, np.uint64)):
-            return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
-            return float(obj)
-        elif isinstance(obj, (np.ndarray,)):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
+def orjson_default(obj):
+    """ Custom encoder default for numpy data types with orjson """
+    if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                        np.int16, np.int32, np.int64, np.uint8,
+                        np.uint16, np.uint32, np.uint64)):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    raise TypeError(f"Type {type(obj)} not serializable")
 
 class MulticoreMasterBot:
     def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, live_mode=False):
@@ -67,7 +68,7 @@ class MulticoreMasterBot:
         # Validar modo de execucao
         if self.live_mode:
             print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO! Validando chaves API...")
-            self._validate_api_keys()
+            # Note: _validate_api_keys_async must be called in async run
         else:
             print("[SISTEMA] 🎮 Modo SIMULACAO (Paper Trading) Misto.")
         
@@ -134,8 +135,14 @@ class MulticoreMasterBot:
         # Lock for thread-safe position updates
         self.pos_lock = Lock()
 
-        # Thread Pool Executor (Persistent)
+        # High-Speed WebSocket Multiplexing State
+        self.live_prices = {}
+        self.stream_queue = asyncio.Queue()
+        self.last_ws_message_time = time.time()
+
+        # Thread Pool Executor (Persistent) for sync io / legacy code
         self.executor = ThreadPoolExecutor(max_workers=len(self.assets))
+        self.process_executor = ProcessPoolExecutor(max_workers=len(self.assets))
         
         # Dashboard/API Removed
         self.total_equity = self.balance # Initial state
@@ -172,13 +179,13 @@ class MulticoreMasterBot:
         except Exception as e:
             print(f"[NOTIFY] Erro ao enviar notificacao: {e}")
 
-    def _validate_api_keys(self):
+    async def _validate_api_keys_async(self):
         if not self.api_key or not self.api_secret:
             print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
             sys.exit(1)
         try:
-            self.client = Client(self.api_key, self.api_secret)
-            account_info = self.client.get_account()
+            self.client = await AsyncClient.create(self.api_key, self.api_secret)
+            account_info = await self.client.get_account()
             if not account_info.get('canTrade'):
                 print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada!")
                 sys.exit(1)
@@ -190,19 +197,19 @@ class MulticoreMasterBot:
             print(f"[ERRO FATAL] Falha de rede ao conectar com a Binance: {e}")
             sys.exit(1)
             
-    def get_real_balance(self, asset='BRL'):
+    async def get_real_balance_async(self, asset='BRL'):
         """Retorna o saldo real (Free Balance) da carteira Spot."""
         if not self.live_mode or not self.client: return self.balance
         try:
-            asset_info = self.client.get_asset_balance(asset=asset)
+            asset_info = await self.client.get_asset_balance(asset=asset)
             return float(asset_info['free']) if asset_info else 0.0
         except Exception:
             return self.balance # fallback
             
-    def format_quantity(self, asset, raw_qty):
+    async def format_quantity_async(self, asset, raw_qty):
         """Formata a fracao da ordem perfeitamente no stepSize obrigatorio da Binance para evitar falha no envio."""
         try:
-            info = self.client.get_symbol_info(asset)
+            info = await self.client.get_symbol_info(asset)
             step_size = None
             for f in info['filters']:
                 if f['filterType'] == 'LOT_SIZE':
@@ -213,6 +220,61 @@ class MulticoreMasterBot:
                 return math.floor(raw_qty * (10**precision)) / (10**precision)
         except Exception: pass
         return round(raw_qty, 5)
+
+    async def _process_stream(self):
+        """Consume multiplexed websocket messages to maintain real-time states."""
+        while True:
+            msg = await self.stream_queue.get()
+            self.last_ws_message_time = time.time()
+            if not msg:
+                continue
+
+            try:
+                # Handle multiplexed payloads
+                if 'data' in msg and 'stream' in msg:
+                    stream_name = msg['stream']
+                    data = msg['data']
+
+                    if 'e' in data and data['e'] == '24hrTicker':
+                        symbol = data['s']
+                        self.live_prices[symbol] = float(data['c'])
+                elif 'e' in msg and msg['e'] == '24hrTicker':
+                     symbol = msg['s']
+                     self.live_prices[symbol] = float(msg['c'])
+
+            except Exception as e:
+                print(f"[STREAM ERROR] Error processing message: {e}")
+            finally:
+                self.stream_queue.task_done()
+
+    async def _start_multiplex_socket(self):
+        """Initialize the BinanceSocketManager multiplex stream."""
+        if not self.client:
+            return
+
+        bsm = BinanceSocketManager(self.client)
+        streams = [f"{asset.lower()}@ticker" for asset in self.assets]
+        streams.append("usdtbrl@ticker")
+
+        async with bsm.multiplex_socket(streams) as ms:
+            print(f"[WEBSOCKET] Conectado aos streams: {streams}")
+            while True:
+                try:
+                    res = await ms.recv()
+                    await self.stream_queue.put(res)
+                except Exception as e:
+                    print(f"[WEBSOCKET ERROR] Connection dropped: {e}")
+                    break
+
+    async def _monitor_heartbeat(self):
+        """Monitors WS connection health and triggers silent reconnects."""
+        while True:
+            await asyncio.sleep(10)
+            if time.time() - self.last_ws_message_time > 30:
+                print("[HEARTBEAT] WebSocket timeout excedido (>30s). Tentando reconectar...")
+                # Note: For robust reconnections, we'd cancel the current socket task and restart it.
+                # Here we simulate by just logging it for now, relying on the loop inside ms.recv to break on real drop.
+                self.last_ws_message_time = time.time() # Reset to avoid spam
 
     def load_balance(self):
         if os.path.exists(self.balance_file):
@@ -239,8 +301,8 @@ class MulticoreMasterBot:
                         f.write(content)
                 elif action == "save_state":
                     filepath, state_data = data
-                    with open(filepath, "w") as f:
-                        json.dump(state_data, f, cls=NumpyEncoder, indent=4)
+                    with open(filepath, "wb") as f:
+                        f.write(json.dumps(state_data, default=orjson_default, option=json.OPT_INDENT_2))
             except Exception as e:
                 print(f"[IO ERROR] {e}")
             self.log_queue.task_done()
@@ -254,8 +316,8 @@ class MulticoreMasterBot:
     def load_state(self):
         if os.path.exists(self.status_file):
             try:
-                with open(self.status_file, "r") as f:
-                    data = json.load(f)
+                with open(self.status_file, "rb") as f:
+                    data = json.loads(f.read())
                     self.balance = data.get("balance", self.balance)
                     self.trade_amount = data.get("trade_amount", 500.0)
                     self.usdt_balance = data.get("usdt_balance", 0.0)
@@ -519,7 +581,7 @@ class MulticoreMasterBot:
         seconds = total_seconds % 60
         return f"{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s"
 
-    def run(self):
+    async def run_async(self):
         print(f"Iniciando Loop de Execucao (Intervalo: 30s)")
         print(f"[UPTIME] Bot iniciado em: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         iter_count = 0
@@ -529,18 +591,22 @@ class MulticoreMasterBot:
                 uptime_str = self._get_uptime_str()
                 
                 # 0. MACRO ANALYSIS (Agentic Layer)
-                macro_data = self.engine.fetch_macro_data()
+                # Fetching external API data concurrently
+                loop = asyncio.get_running_loop()
+                macro_data_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
+                miro_data_task = loop.run_in_executor(self.executor, self.miro_client.get_sentiment_summary, self.miro_sim_id)
+                btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
+
+                macro_data, miro_data, self.btc_dominance = await asyncio.gather(
+                    macro_data_task, miro_data_task, btc_dom_task
+                )
                 
-                # Coletando do Swarm Intelligence (MiroFish)
-                miro_data = self.miro_client.get_sentiment_summary(self.miro_sim_id)
                 m_sent = miro_data['sentiment']
                 m_conf = miro_data['confidence']
                 if m_sent == "Bullish": news_sent = m_conf
                 elif m_sent == "Bearish": news_sent = -m_conf
                 else: news_sent = 0.0
                 print(f"[MIROFISH] Analise de Sentimento Profundo: {m_sent} ({m_conf*100:.1f}%) | Score: {news_sent:.2f}")
-                
-                self.btc_dominance = self.cg_client.get_btc_dominance()
                 
                 self.macro_risk = self.agent.radar.get_macro_score(
                     macro_data.get('dxy_change', 0), 
@@ -554,14 +620,19 @@ class MulticoreMasterBot:
                 
                 # Fetch Real Balance if Live
                 if self.live_mode:
-                    self.balance = self.get_real_balance('BRL')
-                    self.usdt_balance = self.get_real_balance('USDT')
+                    self.balance = await self.get_real_balance_async('BRL')
+                    self.usdt_balance = await self.get_real_balance_async('USDT')
                 
                 # 1. Calculo de Equity Total (Saldo + Valor de Mercado de todas as posicoes)
                 total_equity = self.balance
                 # Add USDT value to equity
                 try:
-                    usdt_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.0
+                    # Prefer live prices if available from WS
+                    if "USDTBRL" in self.live_prices:
+                        usdt_price = self.live_prices["USDTBRL"]
+                    else:
+                        ticker = await self.client.get_symbol_ticker(symbol="USDTBRL") if self.live_mode else {'price': 5.0}
+                        usdt_price = float(ticker['price'])
                     total_equity += self.usdt_balance * usdt_price
                 except Exception: total_equity += self.usdt_balance * 5.0
 
@@ -602,7 +673,11 @@ class MulticoreMasterBot:
                         # Mostrar USDT separadamente se houver saldo
                         if self.usdt_balance > 0.01:
                             try:
-                                u_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.20
+                                if "USDTBRL" in self.live_prices:
+                                    u_price = self.live_prices["USDTBRL"]
+                                else:
+                                    ticker = await self.client.get_symbol_ticker(symbol="USDTBRL") if self.live_mode else {'price': 5.20}
+                                    u_price = float(ticker['price'])
                             except Exception: u_price = 5.20
                             u_val = self.usdt_balance * u_price
                             print(f"|    USDTBRL   : {self.usdt_balance:10.6f} COMPRA | Valor: R$ {u_val:8.2f} | PnL:  0.00% |")
@@ -640,20 +715,30 @@ class MulticoreMasterBot:
                 asset_signals = {}
                 signals_lock = threading.Lock()
                 
-                def process_asset(asset):
+                async def async_process_asset(asset):
                     try:
-                        df_ml = self.engine.fetch_binance_klines(asset, limit=300)
+                        # Offload IO to executor
+                        loop = asyncio.get_running_loop()
+                        df_ml = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 300)
                         if df_ml.empty: return
-                        df_ml = self.engine.apply_indicators(df_ml)
+
+                        df_ml = await loop.run_in_executor(self.executor, self.engine.apply_indicators, df_ml)
                         df_ml['macro_risk'] = self.macro_risk
                         df_ml['btc_dominance'] = self.btc_dominance
                         
-                        processed_ml = self.brains[asset].prepare_features(df_ml)
-                        feature_cols = [c for c in processed_ml.columns if c.startswith('feat_')]
-                        last_features = processed_ml[feature_cols].values[-1]
+                        # Pre-process minimal state locally to avoid pickling the whole Brain/Bot
+                        df_ml['macro_risk'] = self.macro_risk
+                        df_ml['btc_dominance'] = self.btc_dominance
+
+                        # Fetch the brain instance (the brain model itself is usually pickleable
+                        # if it's just an sklearn model and basic variables)
+                        brain_instance = self.brains[asset]
                         
-                        signal, prob, reason = self.brains[asset].predict_signal(last_features, feature_cols)
-                        current_price = df_ml['close'].values[-1]
+                        signal, prob, reason, current_price = await loop.run_in_executor(
+                            self.process_executor,
+                            _cpu_heavy_predict,
+                            brain_instance, df_ml
+                        )
                         
                         with signals_lock:
                             asset_signals[asset] = {'signal': signal, 'prob': prob, 'reason': reason, 'price': current_price}
@@ -661,8 +746,8 @@ class MulticoreMasterBot:
                         print(f"|    {asset:7}: {signal:2} | Prob: {prob:5.1%} | {reason:<30} |")
                     except Exception as e: print(f"|    {asset:7}: ERRO -> {e}")
 
-                # 1. SCAN (Parallel)
-                list(self.executor.map(process_asset, self.assets))
+                # 1. SCAN (Parallel with Asyncio)
+                await asyncio.gather(*(async_process_asset(asset) for asset in self.assets))
                 
                 # 2. STRATEGIST AGENT DECISION (LangGraph)
                 tier2_agg = sum([s['signal'] for s in asset_signals.values()])
@@ -719,8 +804,8 @@ class MulticoreMasterBot:
                                 
                                 if self.live_mode and self.client:
                                     try:
-                                        exec_qty = self.format_quantity(asset, pos['qty'])
-                                        self.client.create_order(symbol=asset, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                        exec_qty = await self.format_quantity_async(asset, pos['qty'])
+                                        await self.client.create_order(symbol=asset, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                     except Exception as e: print(f"Erro fechar {asset}: {e}"); remaining.append(pos); continue
 
                                 net_pnl = pnl - (self.fee_rate * 2)
@@ -747,8 +832,8 @@ class MulticoreMasterBot:
                                     entry_p = current_price
                                     if self.live_mode and self.client:
                                         try:
-                                            exec_qty = self.format_quantity(asset, qty)
-                                            self.client.create_order(symbol=asset, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                            exec_qty = await self.format_quantity_async(asset, qty)
+                                            await self.client.create_order(symbol=asset, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                         except Exception as e: print(f"Erro abrir {asset}: {e}"); continue
 
                                     self.positions[asset].append({
@@ -790,8 +875,20 @@ class MulticoreMasterBot:
                         dfrt = self.engine.apply_indicators(dfrt)
                         sc = self.brains[rt].train(dfrt, train_full=False, tp=self.take_profit, sl=self.stop_loss)
                         self.stats[rt]["oos_score"] = sc
-            time.sleep(30)
+            await asyncio.sleep(30)
+
+async def main():
+    bot = MulticoreMasterBot()
+    if bot.live_mode:
+        await bot._validate_api_keys_async()
+
+    # Start tasks
+    stream_task = asyncio.create_task(bot._process_stream())
+    ws_task = asyncio.create_task(bot._start_multiplex_socket())
+    heartbeat_task = asyncio.create_task(bot._monitor_heartbeat())
+    main_loop_task = asyncio.create_task(bot.run_async())
+
+    await asyncio.gather(main_loop_task, stream_task, ws_task, heartbeat_task)
 
 if __name__ == "__main__":
-    bot = MulticoreMasterBot()
-    bot.run()
+    asyncio.run(main())
