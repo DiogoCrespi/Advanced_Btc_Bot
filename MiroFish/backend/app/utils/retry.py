@@ -6,6 +6,7 @@ API调用重试机制
 
 import time
 import random
+import asyncio
 import functools
 from typing import Callable, Any, Optional, Type, Tuple
 from ..utils.logger import get_logger
@@ -40,41 +41,76 @@ def retry_with_backoff(
             ...
     """
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
-            last_exception = None
-            delay = initial_delay
-            
-            for attempt in range(max_retries + 1):
-                try:
-                    return func(*args, **kwargs)
-                    
-                except exceptions as e:
-                    last_exception = e
-                    
-                    if attempt == max_retries:
-                        logger.error(f"函数 {func.__name__} 在 {max_retries} 次重试后仍失败: {str(e)}")
-                        raise
-                    
-                    # 计算延迟
-                    current_delay = min(delay, max_delay)
-                    if jitter:
-                        current_delay = current_delay * (0.5 + random.random())
-                    
-                    logger.warning(
-                        f"函数 {func.__name__} 第 {attempt + 1} 次尝试失败: {str(e)}, "
-                        f"{current_delay:.1f}秒后重试..."
-                    )
-                    
-                    if on_retry:
-                        on_retry(e, attempt + 1)
-                    
-                    time.sleep(current_delay)
-                    delay *= backoff_factor
-            
-            raise last_exception
-        
-        return wrapper
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs) -> Any:
+                last_exception = None
+                delay = initial_delay
+
+                for attempt in range(max_retries + 1):
+                    try:
+                        return await func(*args, **kwargs)
+
+                    except exceptions as e:
+                        last_exception = e
+
+                        if attempt == max_retries:
+                            logger.error(f"异步函数 {func.__name__} 在 {max_retries} 次重试后仍失败: {str(e)}")
+                            raise
+
+                        # 计算延迟
+                        current_delay = min(delay, max_delay)
+                        if jitter:
+                            current_delay = current_delay * (0.5 + random.random())
+
+                        logger.warning(
+                            f"异步函数 {func.__name__} 第 {attempt + 1} 次尝试失败: {str(e)}, "
+                            f"{current_delay:.1f}秒后重试..."
+                        )
+
+                        if on_retry:
+                            on_retry(e, attempt + 1)
+
+                        await asyncio.sleep(current_delay)
+                        delay *= backoff_factor
+
+                raise last_exception
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs) -> Any:
+                last_exception = None
+                delay = initial_delay
+
+                for attempt in range(max_retries + 1):
+                    try:
+                        return func(*args, **kwargs)
+
+                    except exceptions as e:
+                        last_exception = e
+
+                        if attempt == max_retries:
+                            logger.error(f"函数 {func.__name__} 在 {max_retries} 次重试后仍失败: {str(e)}")
+                            raise
+
+                        # 计算延迟
+                        current_delay = min(delay, max_delay)
+                        if jitter:
+                            current_delay = current_delay * (0.5 + random.random())
+
+                        logger.warning(
+                            f"函数 {func.__name__} 第 {attempt + 1} 次尝试失败: {str(e)}, "
+                            f"{current_delay:.1f}秒后重试..."
+                        )
+
+                        if on_retry:
+                            on_retry(e, attempt + 1)
+
+                        time.sleep(current_delay)
+                        delay *= backoff_factor
+
+                raise last_exception
+            return wrapper
     return decorator
 
 

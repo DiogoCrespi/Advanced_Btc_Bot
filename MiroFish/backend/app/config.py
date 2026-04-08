@@ -25,6 +25,15 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     
+    # CORS配置
+    allowed_origins_env = os.environ.get('ALLOWED_ORIGINS', '')
+    if allowed_origins_env == '*':
+        ALLOWED_ORIGINS = '*'
+    elif allowed_origins_env:
+        ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins_env.split(',')]
+    else:
+        ALLOWED_ORIGINS = []
+
     # JSON配置 - 禁用ASCII转义，让中文直接显示（而不是 \uXXXX 格式）
     JSON_AS_ASCII = False
     
