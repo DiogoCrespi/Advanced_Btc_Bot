@@ -6,6 +6,7 @@ import orjson as json
 import requests
 import queue
 import threading
+import argparse
 import numpy as np
 import pandas as pd
 import asyncio
@@ -16,10 +17,11 @@ from threading import Lock, Thread
 
 import math
 from dotenv import load_dotenv
-from binance.client import Client, AsyncClient
+from binance.client import AsyncClient
 from binance import BinanceSocketManager
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
+from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
 
 load_dotenv()
 
@@ -34,6 +36,7 @@ from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
 from logic.mirofish_client import MiroFishClient
 from logic.coingecko_client import CoinGeckoClient
+from logic.risk_manager import RiskManager
 
 # Forcar unbuffered stdout
 sys.stdout.reconfigure(line_buffering=True)
@@ -51,11 +54,9 @@ def orjson_default(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 class MulticoreMasterBot:
-    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, live_mode=False):
-        self.live_mode = live_mode
-        self.api_key = os.getenv("BINANCE_API_KEY")
-        self.api_secret = os.getenv("BINANCE_API_SECRET")
-        self.client = None
+    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, mode="backtest"):
+        self.mode = mode
+        self.live_mode = (mode == "live")
         
         self.assets = assets
         self.cofre_threshold = cofre_threshold
@@ -65,16 +66,26 @@ class MulticoreMasterBot:
         self.start_time = datetime.now()  # Uptime tracking
         self.equity_history = [] # For dashboard charts
         
-        # Validar modo de execucao
-        if self.live_mode:
-            print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO! Validando chaves API...")
-            # Note: _validate_api_keys_async must be called in async run
+        # Initialize Exchange interface based on mode
+        if self.mode == "live":
+            print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO!")
+            self.exchange = BinanceLive()
+        elif self.mode == "testnet":
+            print("[SISTEMA] 🧪 MODO TESTNET ATIVADO!")
+            self.exchange = BinanceTestnet()
+        elif self.mode == "backtest":
+            print("[SISTEMA] 🎮 Modo BACKTEST (Simulacao Local) ATIVADO.")
+            self.exchange = BacktestEngine(initial_balance=1000.0)
         else:
-            print("[SISTEMA] 🎮 Modo SIMULACAO (Paper Trading) Misto.")
+            print(f"[ERRO] Modo de execucao invalido: {self.mode}")
+            sys.exit(1)
         
         self.trade_amount = 100.0   # Base fallback
         self.risk_per_trade_pct = 0.05 # 5% per trade
         self.fee_rate = 0.001       # 0.1% Binance Standard
+
+        # Note: Risk is now handled dynamically by self.risk_manager.
+        # Keeping variables below for legacy references / internal ML Brain defaults.
         self.take_profit = 0.03     # 3% Base
         self.stop_loss = 0.015      # 1.5% Base
         self.trailing_activation = 0.015 # Activate trailing at 1.5% profit
@@ -127,6 +138,9 @@ class MulticoreMasterBot:
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"history_days": 0, "samples": 0, "oos_score": 0.0} for asset in assets}
         
+        # Risk Manager Configuration
+        self.risk_manager = RiskManager()
+
         # Async I/O Logging Queue
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -179,45 +193,31 @@ class MulticoreMasterBot:
         except Exception as e:
             print(f"[NOTIFY] Erro ao enviar notificacao: {e}")
 
-    async def _validate_api_keys_async(self):
-        if not self.api_key or not self.api_secret:
-            print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
-            sys.exit(1)
-        try:
-            self.client = await AsyncClient.create(self.api_key, self.api_secret)
-            account_info = await self.client.get_account()
-            if not account_info.get('canTrade'):
-                print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada!")
-                sys.exit(1)
-            print("✅ Conectado na Binance! Permissao de leitura/trading ativa.")
-        except BinanceAPIException as e:
-            print(f"[ERRO FATAL] Credenciais rejeitadas pela Binance: {e}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[ERRO FATAL] Falha de rede ao conectar com a Binance: {e}")
-            sys.exit(1)
-            
     async def get_real_balance_async(self, asset='BRL'):
-        """Retorna o saldo real (Free Balance) da carteira Spot."""
-        if not self.live_mode or not self.client: return self.balance
+        """Retorna o saldo real (Free Balance) da carteira Spot via Exchange Interface (Assincrono)."""
         try:
-            asset_info = await self.client.get_asset_balance(asset=asset)
-            return float(asset_info['free']) if asset_info else 0.0
+            return await self.exchange.get_balance(asset)
         except Exception:
             return self.balance # fallback
+
+    @property
+    def client(self):
+        """Helper to access the internal binance client for legacy/websocket hooks."""
+        return getattr(self.exchange, 'client', None)
             
     async def format_quantity_async(self, asset, raw_qty):
         """Formata a fracao da ordem perfeitamente no stepSize obrigatorio da Binance para evitar falha no envio."""
         try:
-            info = await self.client.get_symbol_info(asset)
-            step_size = None
-            for f in info['filters']:
-                if f['filterType'] == 'LOT_SIZE':
-                    step_size = float(f['stepSize'])
-                    break
-            if step_size:
-                precision = int(round(-math.log(step_size, 10), 0))
-                return math.floor(raw_qty * (10**precision)) / (10**precision)
+            info = await self.exchange.get_symbol_info(asset)
+            if info:
+                step_size = None
+                for f in info['filters']:
+                    if f['filterType'] == 'LOT_SIZE':
+                        step_size = float(f['stepSize'])
+                        break
+                if step_size:
+                    precision = int(round(-math.log(step_size, 10), 0))
+                    return math.floor(raw_qty * (10**precision)) / (10**precision)
         except Exception: pass
         return round(raw_qty, 5)
 
@@ -382,12 +382,15 @@ class MulticoreMasterBot:
                 amount_to_spend = max(self.balance * 0.3, self.trade_amount)
                 if self.balance >= amount_to_spend:
                     qty_usdt = amount_to_spend / current_price
-                    if self.live_mode and self.client:
+                    if self.mode != "backtest":
                         try:
                             exec_qty = self.format_quantity("USDTBRL", qty_usdt)
-                            self.client.create_order(symbol="USDTBRL", side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                            self.exchange.create_order(symbol="USDTBRL", side=SIDE_BUY, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                         except Exception as e:
                             print(f"[USDT] Erro compra: {e}"); return display_lines
+                    elif self.mode == "backtest":
+                        # In backtest mode, simulate execution logic internally
+                        pass
                     
                     self.balance -= amount_to_spend
                     self.usdt_balance += qty_usdt
@@ -399,12 +402,14 @@ class MulticoreMasterBot:
             elif signal == -1: # VENDER USDT para BRL
                 if self.usdt_balance > 0:
                     amount_to_receive = self.usdt_balance * current_price
-                    if self.live_mode and self.client:
+                    if self.mode != "backtest":
                         try:
                             exec_qty = self.format_quantity("USDTBRL", self.usdt_balance)
-                            self.client.create_order(symbol="USDTBRL", side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                            self.exchange.create_order(symbol="USDTBRL", side=SIDE_SELL, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                         except Exception as e:
                             print(f"[USDT] Erro venda: {e}"); return display_lines
+                    elif self.mode == "backtest":
+                        pass
                     
                     self.balance += amount_to_receive * (1 - self.fee_rate)
                     log_msg = f"[{timestamp}] VENDA USDT: {agent_reason} | Preco: {current_price:.2f} | BRL Recup: {amount_to_receive:.2f}"
@@ -631,8 +636,8 @@ class MulticoreMasterBot:
                     if "USDTBRL" in self.live_prices:
                         usdt_price = self.live_prices["USDTBRL"]
                     else:
-                        ticker = await self.client.get_symbol_ticker(symbol="USDTBRL") if self.live_mode else {'price': 5.0}
-                        usdt_price = float(ticker['price'])
+                        ticker = await self.exchange.get_ticker(symbol="USDTBRL")
+                        usdt_price = float(ticker['price']) if ticker else 5.0
                     total_equity += self.usdt_balance * usdt_price
                 except Exception: total_equity += self.usdt_balance * 5.0
 
@@ -657,6 +662,12 @@ class MulticoreMasterBot:
                     "equity": round(total_equity, 2)
                 })
                 if len(self.equity_history) > 100: self.equity_history.pop(0)
+
+                # Check Max Drawdown limit
+                self.risk_manager.update_equity_high(total_equity)
+                if self.risk_manager.check_max_drawdown(total_equity):
+                    print("[ALERTA] Limite Max Drawdown atingido! Cooldown ativado.")
+
                 # TIER 1: PORTFOLIO
                 if self.positions or self.usdt_balance > 0.01:
                     print(f"| [PORTFOLIO] Ativos em Carteira:                                        |")
@@ -676,8 +687,8 @@ class MulticoreMasterBot:
                                 if "USDTBRL" in self.live_prices:
                                     u_price = self.live_prices["USDTBRL"]
                                 else:
-                                    ticker = await self.client.get_symbol_ticker(symbol="USDTBRL") if self.live_mode else {'price': 5.20}
-                                    u_price = float(ticker['price'])
+                                    ticker = await self.exchange.get_ticker(symbol="USDTBRL")
+                                    u_price = float(ticker['price']) if ticker else 5.20
                             except Exception: u_price = 5.20
                             u_val = self.usdt_balance * u_price
                             print(f"|    USDTBRL   : {self.usdt_balance:10.6f} COMPRA | Valor: R$ {u_val:8.2f} | PnL:  0.00% |")
@@ -782,31 +793,41 @@ class MulticoreMasterBot:
                             pnl = ((current_price / pos['entry']) - 1) * pos['signal']
                             exit_reason = None
                             
-                            # Use dynamic TP/SL
-                            current_tp = self.take_profit * pos.get('tp_mult', 1.0)
-                            current_sl = self.stop_loss * pos.get('sl_mult', 1.0)
+                            # ML Signal logic
+                            ml_signal_str = 'HOLD'
+                            if signal == -pos['signal'] and prob >= 0.75:
+                                ml_signal_str = 'REVERSAL'
+
+                            pos_id = pos.get('id', f"{pos['time']}_{pos['entry']}")
                             
-                            if pnl > self.trailing_activation:
-                                if 'max_pnl' not in pos: pos['max_pnl'] = pnl
-                                else: pos['max_pnl'] = max(pos['max_pnl'], pnl)
-                                if pnl < (pos['max_pnl'] - self.trailing_callback):
-                                    exit_reason = f"TRAILING STOP ({pos['max_pnl']:.2%})"
-                            
-                            if not exit_reason:
-                                if pnl >= current_tp: exit_reason = "TAKE PROFIT"
-                                elif pnl <= -current_sl: exit_reason = "STOP LOSS"
-                                elif signal == -pos['signal'] and prob >= 0.75: exit_reason = "REVERSAL"
+                            # Intercept with Risk Manager
+                            action, risk_reason = self.risk_manager.check_exit_conditions(
+                                asset=asset,
+                                pos_id=pos_id,
+                                current_price=current_price,
+                                entry_price=pos['entry'],
+                                signal_direction=pos['signal'],
+                                ml_signal=ml_signal_str
+                            )
+
+                            if action == 'SELL' or risk_reason:
+                                exit_reason = risk_reason or action
+                            elif ml_signal_str == 'REVERSAL':
+                                exit_reason = "REVERSAL"
 
                             if exit_reason:
+                                self.risk_manager.cleanup_tracking(asset, pos_id)
                                 if asset == "BTCBRL": # Cascade Exit for XAUT
                                     with self.xaut_lock:
                                         self.xaut_positions = [] # Simplified for demo
                                 
-                                if self.live_mode and self.client:
+                                if self.mode != "backtest":
                                     try:
                                         exec_qty = await self.format_quantity_async(asset, pos['qty'])
-                                        await self.client.create_order(symbol=asset, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                        await self.exchange.create_order(symbol=asset, side=SIDE_SELL, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                     except Exception as e: print(f"Erro fechar {asset}: {e}"); remaining.append(pos); continue
+                                elif self.mode == "backtest":
+                                    pass
 
                                 net_pnl = pnl - (self.fee_rate * 2)
                                 self.balance += pos['cost'] * (1 + net_pnl)
@@ -821,7 +842,11 @@ class MulticoreMasterBot:
 
                         # --- B. Entries & DCA (Decision Gate) ---
                         max_dca = 2 if asset == "BTCBRL" else 1
-                        if signal != 0 and len(self.positions[asset]) < max_dca:
+
+                        # Block new entries if in cooldown
+                        in_cooldown = self.risk_manager.is_in_cooldown()
+
+                        if signal != 0 and len(self.positions[asset]) < max_dca and not in_cooldown:
                             decision, agent_reason, smodifiers = self.agent.assess_trade(asset, signal, prob, reason)
                             
                             if decision == "APPROVE" and (agent_res['decision'] == "EXECUTE_ALPHA" or signal == 0):
@@ -830,11 +855,13 @@ class MulticoreMasterBot:
                                 if self.balance >= current_trade_size and current_trade_size >= self.min_binance_amount:
                                     qty = current_trade_size / current_price
                                     entry_p = current_price
-                                    if self.live_mode and self.client:
+                                    if self.mode != "backtest":
                                         try:
                                             exec_qty = await self.format_quantity_async(asset, qty)
-                                            await self.client.create_order(symbol=asset, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                            await self.exchange.create_order(symbol=asset, side=SIDE_BUY, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                         except Exception as e: print(f"Erro abrir {asset}: {e}"); continue
+                                    elif self.mode == "backtest":
+                                        pass
 
                                     self.positions[asset].append({
                                         "entry": entry_p, "signal": signal, "qty": qty, "cost": current_trade_size,
@@ -877,10 +904,9 @@ class MulticoreMasterBot:
                         self.stats[rt]["oos_score"] = sc
             await asyncio.sleep(30)
 
-async def main():
-    bot = MulticoreMasterBot()
-    if bot.live_mode:
-        await bot._validate_api_keys_async()
+async def main(bot):
+    if bot.mode != "backtest" and hasattr(bot.exchange, 'initialize'):
+        await bot.exchange.initialize()
 
     # Start tasks
     stream_task = asyncio.create_task(bot._process_stream())
@@ -891,4 +917,12 @@ async def main():
     await asyncio.gather(main_loop_task, stream_task, ws_task, heartbeat_task)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description='Advanced Multicore BTC Bot')
+    parser.add_argument('--mode', type=str, choices=['live', 'testnet', 'backtest'], default='backtest',
+                        help='Execution mode: live, testnet, or backtest (default)')
+    args = parser.parse_args()
+
+    bot = MulticoreMasterBot(mode=args.mode)
+    
+    # Run the async main entry point
+    asyncio.run(main(bot))

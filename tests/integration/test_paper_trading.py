@@ -16,8 +16,7 @@ from multicore_master_bot import MulticoreMasterBot
 def mock_bot():
     """Inicializa o bot com dependencias mockadas para evitar chamadas de rede."""
     with patch('multicore_master_bot.DataEngine') as mock_engine, \
-         patch('multicore_master_bot.MLBrain') as mock_brain, \
-         patch('multicore_master_bot.Client') as mock_client:
+         patch('multicore_master_bot.MLBrain') as mock_brain:
         
         # Mock do DataEngine
         engine_inst = mock_engine.return_value
@@ -40,12 +39,13 @@ def mock_bot():
         # Limpar arquivos de resultados de testes anteriores
         if not os.path.exists("results"): os.makedirs("results")
         
-        bot = MulticoreMasterBot(live_mode=False)
+        bot = MulticoreMasterBot(mode="backtest")
         return bot
 
 def test_paper_trading_initialization(mock_bot):
     """Verifica se o bot inicia com saldo padrao de R$ 1000 em modo simulacao."""
     assert mock_bot.live_mode == False
+    assert mock_bot.mode == "backtest"
     assert mock_bot.balance >= 1000.0
     assert mock_bot.usdt_balance == 0.0
 
