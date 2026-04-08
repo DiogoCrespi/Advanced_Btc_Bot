@@ -42,17 +42,19 @@ class DataEngine:
 
     def fetch_macro_data(self, period="30d"):
         """
-        Fetches Macro indicators: S&P 500 (^GSPC) and DXY (DX-Y.NYB).
+        Fetches Macro indicators: S&P 500 (^GSPC), DXY (DX-Y.NYB) and Gold (GC=F).
         Returns a dictionary with the % change of each.
         """
         print("Fetching Macro Data (S&P 500 & DXY)...")
         sp500_change = 0.0
         dxy_change = 0.0
+        gold_change = 0.0
         
         try:
             # Download with short timeout and no progress bar
             sp500 = yf.download("^GSPC", period=period, interval="1d", progress=False, timeout=5)
             dxy = yf.download("DX-Y.NYB", period=period, interval="1d", progress=False, timeout=5)
+            gold = yf.download("GC=F", period=period, interval="1d", progress=False, timeout=5)
             
             # 1. Process S&P 500
             if not sp500.empty and len(sp500) >= 2:
@@ -65,14 +67,21 @@ class DataEngine:
                 if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
                 # Bolt optimization: replaced slow Pandas .iloc[-1] with .values[-1] to index numpy array directly
                 dxy_change = float((dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1)
+            
+            # 3. Process Gold (GC=F)
+            if not gold.empty and len(gold) >= 2:
+                if isinstance(gold.columns, pd.MultiIndex): gold.columns = gold.columns.droplevel(1)
+                # Bolt optimization: replaced slow Pandas .iloc[-1] with .values[-1] to index numpy array directly
+                gold_change = float((gold['Close'].values[-1] / gold['Close'].values[-2]) - 1)
 
         except Exception as e:
             # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot
-            print(f"[DATA] Aviso Macro Data: Falha limitada no download (^GSPC/DXY): {e}")
+            print(f"[DATA] Aviso Macro Data: Falha limitada no download (^GSPC/DXY/GC=F): {e}")
 
         return {
             "sp500_change": float(sp500_change),
-            "dxy_change": float(dxy_change)
+            "dxy_change": float(dxy_change),
+            "gold_change": float(gold_change)
         }
 
     def fetch_data(self):

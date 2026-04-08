@@ -10,13 +10,19 @@ class MLBrain:
     Random Forest Classifier to predict BTC price moves based on technical indicators.
     Focado em detectar anomalias de mercado e ineficiencias em multiplos Tiers.
     """
-    def __init__(self, n_estimators=200, random_state=42):
+    def __init__(self, dna=None, n_estimators=200, random_state=42):
+        self.dna = dna
+        # Se houver DNA, os genes sobrepõem os padrões
+        n_est = dna.params["n_estimators"] if dna else n_estimators
+        m_depth = dna.params["max_depth"] if dna else 12
+        m_leaf = dna.params["min_samples_leaf"] if dna else 10
+
         self.model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=12,
-            min_samples_leaf=10,
+            n_estimators=n_est,
+            max_depth=m_depth,
+            min_samples_leaf=m_leaf,
             random_state=random_state,
-            class_weight='balanced' # Lida com o desequilibrio de classes (Neutro e mais comum)
+            class_weight='balanced'
         )
         self.is_trained = False
         self.feature_cols = []
@@ -84,14 +90,19 @@ class MLBrain:
                 
         return np.array(labels)
 
-    def train(self, df, train_full=False, tp=0.015, sl=0.008, horizon=24):
+    def train(self, df, train_full=False, tp=None, sl=None, horizon=None):
         """
         Treina o cerebro de ML com alinhamento garantido de amostras.
         """
+        # Prioridade para os genes do DNA se fornecidos
+        _tp = tp if tp is not None else (self.dna.params["tp"] if self.dna else 0.015)
+        _sl = sl if sl is not None else (self.dna.params["sl"] if self.dna else 0.008)
+        _hz = horizon if horizon is not None else (self.dna.params["horizon"] if self.dna else 24)
+
         data = self.prepare_features(df)
         self.feature_cols = [c for c in data.columns if c.startswith('feat_')]
         X_all = data[self.feature_cols].values
-        y_all = self.create_labels(data, tp=tp, sl=sl, horizon=horizon)
+        y_all = self.create_labels(data, tp=_tp, sl=_sl, horizon=_hz)
         
         # Alinhamento CRITICO para evitar Found input variables with inconsistent numbers of samples
         min_len = min(len(X_all), len(y_all))
@@ -147,7 +158,9 @@ class MLBrain:
         probs = self.model.predict_proba(feat_vec)[0]
         max_prob = max(probs)
         
-        if max_prob < min_confidence:
+        _min_conf = self.dna.params["min_confidence"] if self.dna else min_confidence
+
+        if max_prob < _min_conf:
             return 0, max_prob, f"Conviccao Baixa ({max_prob:.1%})"
         
         # Heuristicas basicas para o 'reason'

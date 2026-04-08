@@ -57,6 +57,16 @@ class RiskManager:
         self.trailing_stop = args.trailing_stop if args.trailing_stop is not None else float(os.getenv("RISK_TRAILING_STOP", "0.005"))
         self.max_drawdown = args.max_drawdown if args.max_drawdown is not None else float(os.getenv("RISK_MAX_DRAWDOWN", "0.05"))
         self.mode = args.mode if args.mode is not None else os.getenv("RISK_MODE", "conservative")
+        
+        # Kelly Criterion Settings
+        self.kelly_fractional = 0.5 # 0.5x Kelly (Fractional) for safety
+        self.max_kelly_cap = 0.10 # Max 10% of equity per trade regardless of Kelly
+        self.ego_multiplier = 1.0 # 1.0 = full trust, 0.3 = extreme doubt
+        
+        # Bunker State (Protecao Ativa)
+        self.bunker_mode = False
+        self.target_hedge_pct = 0.0 # 0.0 a 0.9 (90% Bunker)
+        self.last_rebalance_ts = 0
 
         # Tracking peak prices for trailing stop: { "asset": { "pos_id": peak_price } }
         self.peak_prices = {}
@@ -207,3 +217,67 @@ class RiskManager:
 
         distance = (liq_price - current_price) / current_price
         return max(0.0, distance), liq_price
+
+    def calculate_kelly_fraction(self, accuracy, risk_reward_ratio=None):
+        """
+        Calcula a fragao ideal de alocacao usando o Criterio de Kelly.
+        Formula: f* = (p(b+1) - 1) / b
+        Onde p = acuracia (probabilidade), b = ratio (take_profit / stop_loss)
+        """
+        p = accuracy
+        b = risk_reward_ratio if risk_reward_ratio else (self.take_profit / self.stop_loss)
+        
+        if b <= 0 or p <= 0: return 0.0
+        
+        kelly_f = (p * (b + 1) - 1) / b
+        
+        # Aplicar Kelly Fracionario + Calibracao de Ego (Auto-Correcao)
+        final_f = kelly_f * self.kelly_fractional * self.ego_multiplier
+        
+        # Trava de seguranca (Nao alocar mais que o max_kelly_cap da banca)
+        return max(0.0, min(final_f, self.max_kelly_cap))
+
+    def calibrate_ego_buffer(self, realized_acc, expected_acc):
+        """
+        Ajusta o ego_multiplier. Se expected > realized significativamente, reduz o risco.
+        O bot percebe que está 'se achando demais'.
+        """
+        gap = expected_acc - realized_acc
+        if gap > 0.15: # Se o bot acha que acerta 70% mas acerta 50%, gap = 0.20
+             self.ego_multiplier = max(0.3, self.ego_multiplier - 0.1)
+             print(f"[AUTO-CORREÇÃO] Reduzindo Ego Buffer para {self.ego_multiplier:.2f} devido a excesso de confiança.")
+        elif gap < 0.05:
+             self.ego_multiplier = min(1.0, self.ego_multiplier + 0.05)
+             print(f"[AUTO-CORREÇÃO] Restaurando Ego Buffer para {self.ego_multiplier:.2f} (Acurácia em linha).")
+
+    def calculate_bunker_allocation(self, macro_risk: float) -> float:
+        """
+        Determina a porcentagem do capital total que deve estar em Hedge (USDT/XAUT).
+        - Risk < 0.4: 0% Hedge (Alpha Full)
+        - Risk 0.4-0.75: 60% Hedge (Protecao Dinamica)
+        - Risk > 0.75: 90% Hedge (Estado Bunker - Mantem 10% de Honra em BTC)
+        """
+        if macro_risk > 0.75:
+            self.target_hedge_pct = 0.90
+            self.bunker_mode = True
+        elif macro_risk > 0.40:
+            self.target_hedge_pct = 0.60
+            self.bunker_mode = True
+        else:
+            # Desalocacao Gradual (Return to Risk)
+            if self.target_hedge_pct > 0:
+                self.target_hedge_pct = max(0.0, self.target_hedge_pct - 0.20)
+                print(f"[BUNKER] Desalocação Gradual Iniciada: Alvo de Hedge em {self.target_hedge_pct:.1%}")
+            else:
+                self.bunker_mode = False
+        
+        return self.target_hedge_pct
+
+    def get_kelly_trade_amount(self, total_equity, accuracy):
+        """Converte a fracao de Kelly em valor BRL nominal."""
+        fraction = self.calculate_kelly_fraction(accuracy)
+        recommended_amount = total_equity * fraction
+        
+        # Logica de seguranca: Se a acuracia for baixa (< 50%), Kelly sera zero.
+        # Nesses casos, retornamos 0 para impedir a entrada de baixo valor estatistico.
+        return recommended_amount

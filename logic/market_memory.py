@@ -45,11 +45,12 @@ class MarketMemory:
         MERGE (m:MacroState {id: 'schema_seed'})
         MERGE (d:Decision {id: 'schema_seed'})
         MERGE (o:Outcome {id: 'schema_seed'})
+        MERGE (fs:FailedState {id: 'schema_seed'})
         MERGE (e)-[:HAPPENED_IN]->(m)
         MERGE (d)-[:BASED_ON]->(e)
         MERGE (o)-[:FOLLOWED]->(d)
-        WITH e, m, d, o
-        DETACH DELETE e, m, d, o
+        WITH e, m, d, o, fs
+        DETACH DELETE e, m, d, o, fs
         """
         try:
             with self.driver.session() as session:
@@ -154,6 +155,75 @@ class MarketMemory:
                 session.run(query, symbol=symbol, price=price, sentiment=sentiment, ts=timestamp)
         except Exception as e:
             print(f"[MEMORY] Erro ao gravar MarketState: {e}")
+
+    def get_ancestral_dnas(self, vol: float, trend: float, sentiment: float, limit: int = 2):
+        """
+        Busca DNAs no histórico que tiveram alta performance em regimes similares.
+        """
+        if not self.driver: return []
+        
+        # Query Cypher: Busca por proximidade de Volatilidade e Tendencia
+        query = """
+        MATCH (r:Regime)-[:OPTIMAL_DNA]->(d:DNA)
+        WHERE abs(r.volatility - $vol) < 0.005 AND abs(r.trend - $trend) < 0.05
+        RETURN d.params as params, d.fitness as fitness, d.id as id
+        ORDER BY d.fitness DESC
+        LIMIT $limit
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, vol=vol, trend=trend, limit=limit)
+                return [record["params"] for record in result]
+        except Exception as e:
+            print(f"[MEMORY] Erro ao buscar DNA ancestral: {e}")
+            return []
+
+    def record_failed_state(self, metrics: dict, cause: str):
+        """Registra no grafo um cenário onde o bot falhou."""
+        if not self.driver: return
+        query = """
+        CREATE (fs:FailedState {
+            volatility: $vol,
+            trend: $trend,
+            sentiment: $sent,
+            cause: $cause,
+            timestamp: datetime()
+        })
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query, vol=metrics.get('vol', 0), trend=metrics.get('trend', 0), 
+                            sent=metrics.get('sent', 0), cause=cause)
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar falha: {e}")
+
+    def check_failure_risk(self, vol: float, trend: float, sentiment: float):
+        """Busca se o estado atual é similar a falhas recentes."""
+        if not self.driver: return 0.0
+        query = """
+        MATCH (fs:FailedState)
+        WHERE abs(fs.volatility - $vol) < 0.003 AND abs(fs.trend - $trend) < 0.03
+        RETURN count(fs) as failure_count
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, vol=vol, trend=trend).single()
+                return result["failure_count"] if result else 0
+        except Exception as e:
+            print(f"[MEMORY] Erro ao checar risco de falha: {e}")
+            return 0
+
+    def get_recent_failures(self, limit: int = 10):
+        """Busca as ultimas falhas registradas no grafo."""
+        if not self.driver: return []
+        query = "MATCH (fs:FailedState) RETURN fs ORDER BY fs.timestamp DESC LIMIT $limit"
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, limit=limit)
+                return [record["fs"] for record in result]
+        except Exception as e:
+            print(f"[MEMORY] Erro ao buscar falhas: {e}")
+            return []
 
 if __name__ == "__main__":
     memory = MarketMemory()
