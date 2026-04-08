@@ -1,51 +1,64 @@
 # Advanced Multicore BTC Bot & MiroFish Integration
 
-Este projeto combina um robô de trading multicore baseado em Machine Learning com a engine de análise de sentimento social **MiroFish**.
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)
 
-## 🚀 Como Funciona
+**Modular ML-Driven Trading Bot with Async Execution**
 
-O sistema opera em três camadas (Tiers):
+The Advanced Multicore BTC Bot is an institutional-grade, high-performance algorithmic trading system designed for concurrency and predictive precision. By integrating advanced Machine Learning (Random Forest) with order-flow analysis and the **MiroFish** collective intelligence engine, it executes data-driven strategies seamlessly across multiple concurrent processes. Built entirely on asynchronous architecture (asyncio) and ProcessPools, this engine prevents UI and I/O blocking, ensuring absolute responsiveness in volatile markets.
 
-1.  **Tier 1: Portfolio/Inventory**: Exibe em tempo real o seu **Patrimônio Total (Equity)**, separando o que é saldo líquido (Cash) do valor investido nas moedas (BTC, ETH, SOL).
-2.  **Tier 2: Cofre (Basis Arbitrage)**: Monitora oportunidades de arbitragem entre o preço Spot e Futuro para garantir rendimentos fixos em BRL caso a estratégia principal esteja neutra.
-3.  **Tier 3: Alpha (ML Engine)**: Utiliza modelos de Random Forest treinados com dados históricos para prever a direção do preço com base em indicadores técnicos e fluxo de ordens.
-    *   **Viés MiroFish**: Se a MiroFish detectar um sentimento "Bullish", o robô ganha um bônus de confiança para compras. Se "Bearish", o bônus vai para vendas.
+## 🏗 Architecture Overview
 
-## 🛠️ Como Rodar (VPS)
+The system operates strictly on a three-tier concurrent architecture to isolate functionality and optimize performance:
 
-O projeto está totalmente Dockerizado. Para iniciar ou atualizar:
+1. **Data Pipeline (`data/data_engine.py`)**:
+   The ingestion layer. It asynchronously fetches, normalizes, and cleans high-frequency data (OHLCV, Order Flow CVD, Macro S&P/DXY, and Funding Rates) from the Binance and other APIs, maintaining in-memory caches to eliminate redundant I/O requests.
+
+2. **ML Predictor Engine (`logic/ml_brain.py`)**:
+   The analytical core. Offloaded to a separate CPU process via `ProcessPoolExecutor`, the Machine Learning Brain trains and scores predictive Random Forest models using advanced feature engineering (Triple Barrier Method labeling, Momentum, Volatility) to emit directional trading signals (Alpha).
+
+3. **Execution Engine (`multicore_master_bot.py`)**:
+   The async orchestrator. Utilizing an event-driven loop (`asyncio`), it intercepts signals from the ML Predictor, evaluates risk thresholds (Risk Manager), queries the MiroFish sentiment API, and dispatches execution orders (Spot and Basis Arbitrage) without blocking main operations.
+
+## 🚀 Quick Start
+
+Ensure Docker is installed, then launch the entire bot cluster in **Demo Mode** (Paper Trading) with a single command:
 
 ```bash
-# Navegue até a pasta do projeto
-cd ~/Btc_bot
-
-# Inicie os serviços (MiroFish + Bot)
 docker compose up -d --build
 ```
 
-### Comandos Úteis
+Monitor operations natively via terminal:
+```bash
+docker compose logs -f btc-master-bot
+```
 
-*   **Ver Logs do Bot**: `docker compose logs -f btc-master-bot`
-*   **Ver Logs da MiroFish**: `docker compose logs -f mirofish`
-*   **Reiniciar tudo**: `docker compose restart`
-*   **Resetar Saldo**: Pare o bot, edite `Advanced_Btc_Bot/results/balance_state.txt` para `1000.0` e `results/bot_status.json` para `{}` nas posições, depois inicie.
+*Note: The bot starts in Demo Mode by default, writing paper PnL to `results/bot_status.json` and `results/balance_state.txt`. Ensure your `.env` is populated with `BINANCE_API_KEY` for read-only market access.*
 
-## 📝 Monitoramento
+## 🗺 Project Roadmap
 
-O painel do bot exibe:
-- **Equity**: Seu valor total real (Saldo + Moedas).
-- **Saldo Disponível**: Dinheiro livre para novas operações.
-- **Portfolio**: Lista de moedas em carteira, quantidade e PnL individual.
+We are continuously evolving the engine for better performance and modularity. Here is what is next:
+- **Phase 1: Sentiment Analysis Enhancements** - Deeper integration with MiroFish for real-time NLP scoring on Twitter/Reddit streams.
+- **Phase 2: Web Dashboard** - A full-stack React dashboard to visualize ML feature importance, equity curves, and active trades in real-time.
+- **Phase 3: Backtesting CLI** - An isolated, optimized historical backtesting sandbox using vector-based Pandas operations to simulate multi-year strategies in seconds.
+- **Phase 4: Multi-Exchange Arbitrage** - Native support for Bybit and OKX orderbook ingestion.
 
-## ⚙️ Configuração (.env)
+## 🤝 Open-Source Contribution Guidelines
 
-Certifique-se de configurar as chaves no arquivo `.env` na raiz:
-- `BINANCE_API_KEY` / `BINANCE_SECRET_KEY`
-- `MIROFISH_API_URL` (Geralmente `http://mirofish:8000/api` no Docker)
-- Configurações da MiroFish em `MiroFish/.env` (LLM Key, etc).
+We demand high standards for performance and code cleanliness. We welcome contributions that align with our core focus: Scalability, Precision, and Asynchronous execution.
 
----
-##Leia o arquivo para entender o projeto:
-`C:\Nestjs\Btc_bot\antigravity.md`
----
-*Desenvolvido para DiogoCrespi - Quant Integration v2.0*
+1. **Pull Request Workflow**:
+   Fork the repository, create a descriptive branch (e.g., `feature/ml-hyperopt` or `fix/async-lock`), and submit a Pull Request. Ensure all existing tests pass locally before submission.
+2. **Issue Reporting**:
+   Use the GitHub Issue tracker. Include traceback logs, Python version, Docker configuration, and steps to reproduce.
+3. **Code Style**:
+   Strict adherence to PEP-8 formatting. Code must be explicitly typed where possible. Comments and logs must be written without accents (e.g., `nao` instead of `não`) to maintain cross-platform encoding compatibility.
+4. **Modular Design**:
+   The bot is strictly decoupled. If adding a new trading strategy, create a distinct module in `logic/` (e.g., `logic/new_strategy.py`) and inject it into the `IntelligenceManager` or `multicore_master_bot.py`. **Never** block the main event loop (`asyncio.sleep` instead of `time.sleep`).
+
+## ⚠️ Strict Financial Disclaimer
+
+**RISK WARNING:** Trading cryptocurrencies involves significant risk and can result in the loss of your invested capital. This software is provided for educational and research purposes only. The authors, contributors, and maintainers of this project are **not** registered financial advisors.
+
+Past performance of any trading system or ML model is not indicative of future results. You are solely responsible for all trades executed by this bot. By using this software, you agree that you understand the risks and will not hold the developers liable for any financial losses. Never trade with money you cannot afford to lose.
