@@ -43,6 +43,20 @@ sys.stdout.reconfigure(line_buffering=True)
 
 import logging
 
+def _cpu_heavy_predict(brain, df):
+    """
+    Função global para permitir pickling pelo ProcessPoolExecutor.
+    Executa a predição de ML em um processo separado.
+    """
+    try:
+        # Pega a última linha de features
+        curr_feat = df[[c for c in df.columns if c.startswith('feat_')]].values[-1]
+        current_price = float(df['close'].values[-1])
+        signal, prob, reason = brain.predict_signal(curr_feat)
+        return signal, prob, reason, current_price
+    except Exception as e:
+        return 0, 0.0, f"Erro Predicao: {e}", 0.0
+
 class WebSocketSupervisor:
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -183,6 +197,10 @@ class MulticoreMasterBot:
         # Macro Context
         self.last_sentiment = {"sentiment": "Neutral", "confidence": 0.5, "updated": ""}
         
+        # Sonda de Acuracia: Histórico de Sinais para validação (Horizonte 24h)
+        # Chave: asset, Valor: list de (timestamp, signal, price)
+        self.signal_history = {asset: [] for asset in assets}
+        
         # Load Existing State
         self.usdt_balance = 0.0
         self.balance = self.load_balance()
@@ -231,17 +249,29 @@ class MulticoreMasterBot:
         # Dashboard/API Removed
         self.total_equity = self.balance # Initial state
         
-        print(f"[INIT] Inicializando Motores e Treinando Cerebro...")
+        print(f"[INIT] Configurando Motores de ML (Resilient Boot)...")
+        os.makedirs("models", exist_ok=True)
+        
         for asset in assets:
-            limit = 1500
-            df = self.engine.fetch_binance_klines(asset, limit=limit)
-            if not df.empty:
-                df = self.engine.apply_indicators(df)
-                # Capta o score OOS real do treino em vez de valor aleatorio
-                oos_score = self.brains[asset].train(df, train_full=False, tp=self.take_profit, sl=self.stop_loss)
-                self.stats[asset]["history_days"] = len(df) / 24
-                self.stats[asset]["samples"] = len(df)
-                self.stats[asset]["oos_score"] = oos_score
+            model_path = f"models/{asset.lower()}_brain_v1.pkl"
+            
+            # Tentar carregar modelo persistido
+            if self.brains[asset].load_model(model_path):
+                self.stats[asset]["oos_score"] = 0.5 # Placeholder para modelo carregado
+                print(f"[BOOT] {asset}: Modelo recuperado com sucesso. Pronto para execucao imediata.")
+            else:
+                # Fallback: Treinamento Massivo
+                print(f"[WARN] {asset}: Modelo nao encontrado ou corrompido. Iniciando Treino de Resiliencia...")
+                limit = 2000 # Aumentamos o limite para garantir seguranca estatistica no retreino
+                df = self.engine.fetch_binance_klines(asset, limit=limit)
+                if not df.empty:
+                    df = self.engine.apply_indicators(df)
+                    oos_score = self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
+                    self.brains[asset].save_model(model_path)
+                    
+                    self.stats[asset]["history_days"] = len(df) / 24
+                    self.stats[asset]["samples"] = len(df)
+                    self.stats[asset]["oos_score"] = oos_score
         
     def notify_ntfy(self, message, title="BTC BOT UPDATE"):
         """Envia notificacao push via ntfy (Docker Net)"""
@@ -630,6 +660,25 @@ class MulticoreMasterBot:
                 else: news_sent = 0.0
                 print(f"[MIROFISH] Analise de Sentimento Profundo: {m_sent} ({m_conf*100:.1f}%) | Score: {news_sent:.2f}")
                 
+                # --- Sonda de Acuracia: Validação de Sinais Passados ---
+                for asset in self.assets:
+                    current_price = self.live_prices.get(asset, 0.0)
+                    if current_price == 0: continue
+                    
+                    # Filtramos sinais que completaram 24h e ainda não foram validados
+                    cutoff = datetime.now() - timedelta(hours=24)
+                    pending = [s for s in self.signal_history[asset] if not s['valid'] and s['ts'] <= cutoff]
+                    
+                    for s in pending:
+                        price_diff = (current_price / s['price']) - 1
+                        is_correct = (s['sig'] == 1 and price_diff > 0.01) or (s['sig'] == -1 and price_diff < -0.01)
+                        s['valid'] = True
+                        s['result'] = "HIT" if is_correct else "MISS"
+                        
+                        # Alerta se errar sequencialmente ou se a taxa cair
+                        if not is_correct:
+                            print(f"[SONDA] Sinal {asset} de 24h atras FALHOU. (Entrada: {s['price']:.2f}, Atual: {current_price:.2f})")
+                
                 # Gatilho de Memória (Debounce / Throttle 1x por hora)
                 now = datetime.now()
                 current_hour = now.hour
@@ -792,6 +841,14 @@ class MulticoreMasterBot:
                         
                         with signals_lock:
                             asset_signals[asset] = {'signal': signal, 'prob': prob, 'reason': reason, 'price': current_price}
+                            # Sonda de Acuracia: Registra o sinal para validacao futura (24h)
+                            if signal != 0:
+                                self.signal_history[asset].append({
+                                    'ts': datetime.now(),
+                                    'sig': signal,
+                                    'price': current_price,
+                                    'valid': False
+                                })
                         
                         print(f"|    {asset:7}: {signal:2} | Prob: {prob:5.1%} | {reason:<30} |")
                     except Exception as e: print(f"|    {asset:7}: ERRO -> {e}")

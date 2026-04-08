@@ -75,7 +75,7 @@ def main():
     importances = brain.model.feature_importances_
     feat_importances = pd.Series(importances, index=feature_cols).sort_values(ascending=False)
 
-    print("📊 RANKING DE IMPORTÂNCIA:")
+    print("RANKING DE IMPORTANCIA:")
     selected_features = feat_importances[feat_importances > 0.01].index.tolist()
     dropped_features = feat_importances[feat_importances <= 0.01].index.tolist()
 

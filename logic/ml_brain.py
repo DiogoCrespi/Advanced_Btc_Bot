@@ -1,4 +1,5 @@
-# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
+import joblib
+import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -161,3 +162,34 @@ class MLBrain:
             elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo (Venda)"
             
         return pred_class, max_prob, reason
+
+    def save_model(self, path="models/brain_rf_v1.pkl"):
+        """
+        Persiste o modelo e as colunas de features para garantir consistencia no boot.
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data_to_save = {
+            'model': self.model,
+            'feature_cols': self.feature_cols,
+            'is_trained': self.is_trained
+        }
+        joblib.dump(data_to_save, path)
+        print(f"[SAVE] Cerebro persistido em: {path}")
+
+    def load_model(self, path="models/brain_rf_v1.pkl"):
+        """
+        Carrega o modelo e restaura o estado do cérebro.
+        """
+        if not os.path.exists(path):
+            return False
+            
+        try:
+            stored_data = joblib.load(path)
+            self.model = stored_data['model']
+            self.feature_cols = stored_data['feature_cols']
+            self.is_trained = stored_data['is_trained']
+            print(f"[LOAD] Cerebro restaurado com sucesso de: {path} ({len(self.feature_cols)} features)")
+            return True
+        except Exception as e:
+            print(f"⚠ Erro ao carregar cérebro: {e}")
+            return False
