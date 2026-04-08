@@ -6,6 +6,7 @@ import json
 import requests
 import queue
 import threading
+import argparse
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -15,9 +16,8 @@ from threading import Lock, Thread
 
 import math
 from dotenv import load_dotenv
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceOrderException
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
+from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
 
 load_dotenv()
 
@@ -50,11 +50,9 @@ class NumpyEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 class MulticoreMasterBot:
-    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, live_mode=False):
-        self.live_mode = live_mode
-        self.api_key = os.getenv("BINANCE_API_KEY")
-        self.api_secret = os.getenv("BINANCE_API_SECRET")
-        self.client = None
+    def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL"], cofre_threshold=0.08, mode="backtest"):
+        self.mode = mode
+        self.live_mode = (mode == "live")
         
         self.assets = assets
         self.cofre_threshold = cofre_threshold
@@ -64,12 +62,19 @@ class MulticoreMasterBot:
         self.start_time = datetime.now()  # Uptime tracking
         self.equity_history = [] # For dashboard charts
         
-        # Validar modo de execucao
-        if self.live_mode:
-            print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO! Validando chaves API...")
-            self._validate_api_keys()
+        # Initialize Exchange interface based on mode
+        if self.mode == "live":
+            print("[SISTEMA] 🚨 MODO LIVE TRADING ATIVADO!")
+            self.exchange = BinanceLive()
+        elif self.mode == "testnet":
+            print("[SISTEMA] 🧪 MODO TESTNET ATIVADO!")
+            self.exchange = BinanceTestnet()
+        elif self.mode == "backtest":
+            print("[SISTEMA] 🎮 Modo BACKTEST (Simulacao Local) ATIVADO.")
+            self.exchange = BacktestEngine(initial_balance=1000.0)
         else:
-            print("[SISTEMA] 🎮 Modo SIMULACAO (Paper Trading) Misto.")
+            print(f"[ERRO] Modo de execucao invalido: {self.mode}")
+            sys.exit(1)
         
         self.trade_amount = 100.0   # Base fallback
         self.risk_per_trade_pct = 0.05 # 5% per trade
@@ -172,45 +177,28 @@ class MulticoreMasterBot:
         except Exception as e:
             print(f"[NOTIFY] Erro ao enviar notificacao: {e}")
 
-    def _validate_api_keys(self):
-        if not self.api_key or not self.api_secret:
-            print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
-            sys.exit(1)
-        try:
-            self.client = Client(self.api_key, self.api_secret)
-            account_info = self.client.get_account()
-            if not account_info.get('canTrade'):
-                print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada!")
-                sys.exit(1)
-            print("✅ Conectado na Binance! Permissao de leitura/trading ativa.")
-        except BinanceAPIException as e:
-            print(f"[ERRO FATAL] Credenciais rejeitadas pela Binance: {e}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[ERRO FATAL] Falha de rede ao conectar com a Binance: {e}")
-            sys.exit(1)
-            
     def get_real_balance(self, asset='BRL'):
-        """Retorna o saldo real (Free Balance) da carteira Spot."""
-        if not self.live_mode or not self.client: return self.balance
-        try:
-            asset_info = self.client.get_asset_balance(asset=asset)
-            return float(asset_info['free']) if asset_info else 0.0
-        except Exception:
-            return self.balance # fallback
+        """Retorna o saldo real (Free Balance) da carteira Spot via Exchange Interface."""
+        if self.mode != "backtest":
+            try:
+                return self.exchange.get_balance(asset)
+            except Exception:
+                return self.balance # fallback
+        return self.exchange.get_balance(asset) if hasattr(self.exchange, 'balances') else self.balance
             
     def format_quantity(self, asset, raw_qty):
         """Formata a fracao da ordem perfeitamente no stepSize obrigatorio da Binance para evitar falha no envio."""
         try:
-            info = self.client.get_symbol_info(asset)
-            step_size = None
-            for f in info['filters']:
-                if f['filterType'] == 'LOT_SIZE':
-                    step_size = float(f['stepSize'])
-                    break
-            if step_size:
-                precision = int(round(-math.log(step_size, 10), 0))
-                return math.floor(raw_qty * (10**precision)) / (10**precision)
+            info = self.exchange.get_symbol_info(asset)
+            if info:
+                step_size = None
+                for f in info['filters']:
+                    if f['filterType'] == 'LOT_SIZE':
+                        step_size = float(f['stepSize'])
+                        break
+                if step_size:
+                    precision = int(round(-math.log(step_size, 10), 0))
+                    return math.floor(raw_qty * (10**precision)) / (10**precision)
         except Exception: pass
         return round(raw_qty, 5)
 
@@ -320,12 +308,15 @@ class MulticoreMasterBot:
                 amount_to_spend = max(self.balance * 0.3, self.trade_amount)
                 if self.balance >= amount_to_spend:
                     qty_usdt = amount_to_spend / current_price
-                    if self.live_mode and self.client:
+                    if self.mode != "backtest":
                         try:
                             exec_qty = self.format_quantity("USDTBRL", qty_usdt)
-                            self.client.create_order(symbol="USDTBRL", side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                            self.exchange.create_order(symbol="USDTBRL", side=SIDE_BUY, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                         except Exception as e:
                             print(f"[USDT] Erro compra: {e}"); return display_lines
+                    elif self.mode == "backtest":
+                        # In backtest mode, simulate execution logic internally
+                        pass
                     
                     self.balance -= amount_to_spend
                     self.usdt_balance += qty_usdt
@@ -337,12 +328,14 @@ class MulticoreMasterBot:
             elif signal == -1: # VENDER USDT para BRL
                 if self.usdt_balance > 0:
                     amount_to_receive = self.usdt_balance * current_price
-                    if self.live_mode and self.client:
+                    if self.mode != "backtest":
                         try:
                             exec_qty = self.format_quantity("USDTBRL", self.usdt_balance)
-                            self.client.create_order(symbol="USDTBRL", side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                            self.exchange.create_order(symbol="USDTBRL", side=SIDE_SELL, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                         except Exception as e:
                             print(f"[USDT] Erro venda: {e}"); return display_lines
+                    elif self.mode == "backtest":
+                        pass
                     
                     self.balance += amount_to_receive * (1 - self.fee_rate)
                     log_msg = f"[{timestamp}] VENDA USDT: {agent_reason} | Preco: {current_price:.2f} | BRL Recup: {amount_to_receive:.2f}"
@@ -561,7 +554,11 @@ class MulticoreMasterBot:
                 total_equity = self.balance
                 # Add USDT value to equity
                 try:
-                    usdt_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.0
+                    if self.mode != "backtest":
+                        ticker = self.exchange.get_ticker("USDTBRL")
+                        usdt_price = float(ticker['price']) if ticker else 5.0
+                    else:
+                        usdt_price = 5.0
                     total_equity += self.usdt_balance * usdt_price
                 except Exception: total_equity += self.usdt_balance * 5.0
 
@@ -602,7 +599,11 @@ class MulticoreMasterBot:
                         # Mostrar USDT separadamente se houver saldo
                         if self.usdt_balance > 0.01:
                             try:
-                                u_price = float(self.client.get_symbol_ticker(symbol="USDTBRL")['price']) if self.live_mode else 5.20
+                                if self.mode != "backtest":
+                                    ticker = self.exchange.get_ticker("USDTBRL")
+                                    u_price = float(ticker['price']) if ticker else 5.20
+                                else:
+                                    u_price = 5.20
                             except Exception: u_price = 5.20
                             u_val = self.usdt_balance * u_price
                             print(f"|    USDTBRL   : {self.usdt_balance:10.6f} COMPRA | Valor: R$ {u_val:8.2f} | PnL:  0.00% |")
@@ -717,11 +718,13 @@ class MulticoreMasterBot:
                                     with self.xaut_lock:
                                         self.xaut_positions = [] # Simplified for demo
                                 
-                                if self.live_mode and self.client:
+                                if self.mode != "backtest":
                                     try:
                                         exec_qty = self.format_quantity(asset, pos['qty'])
-                                        self.client.create_order(symbol=asset, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                        self.exchange.create_order(symbol=asset, side=SIDE_SELL, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                     except Exception as e: print(f"Erro fechar {asset}: {e}"); remaining.append(pos); continue
+                                elif self.mode == "backtest":
+                                    pass
 
                                 net_pnl = pnl - (self.fee_rate * 2)
                                 self.balance += pos['cost'] * (1 + net_pnl)
@@ -745,11 +748,13 @@ class MulticoreMasterBot:
                                 if self.balance >= current_trade_size and current_trade_size >= self.min_binance_amount:
                                     qty = current_trade_size / current_price
                                     entry_p = current_price
-                                    if self.live_mode and self.client:
+                                    if self.mode != "backtest":
                                         try:
                                             exec_qty = self.format_quantity(asset, qty)
-                                            self.client.create_order(symbol=asset, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=exec_qty)
+                                            self.exchange.create_order(symbol=asset, side=SIDE_BUY, order_type=ORDER_TYPE_MARKET, quantity=exec_qty)
                                         except Exception as e: print(f"Erro abrir {asset}: {e}"); continue
+                                    elif self.mode == "backtest":
+                                        pass
 
                                     self.positions[asset].append({
                                         "entry": entry_p, "signal": signal, "qty": qty, "cost": current_trade_size,
@@ -793,5 +798,10 @@ class MulticoreMasterBot:
             time.sleep(30)
 
 if __name__ == "__main__":
-    bot = MulticoreMasterBot()
+    parser = argparse.ArgumentParser(description='Advanced Multicore BTC Bot')
+    parser.add_argument('--mode', type=str, choices=['live', 'testnet', 'backtest'], default='backtest',
+                        help='Execution mode: live, testnet, or backtest (default)')
+    args = parser.parse_args()
+
+    bot = MulticoreMasterBot(mode=args.mode)
     bot.run()
