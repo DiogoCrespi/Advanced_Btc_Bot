@@ -191,7 +191,7 @@ class MulticoreMasterBot:
                     with open(path, "w", encoding="utf-8") as f: f.write(content)
                 elif action == "save_state":
                     with open(path, "wb") as f: f.write(json.dumps(content, option=json.OPT_INDENT_2))
-            except: pass
+            except Exception: pass
             self.log_queue.task_done()
 
     def async_log(self, p, c): self.log_queue.put(("append", (p, c)))
@@ -199,7 +199,7 @@ class MulticoreMasterBot:
     def load_balance(self):
         if os.path.exists(self.balance_file):
             try: return float(open(self.balance_file).read().strip())
-            except: pass
+            except Exception: pass
         return 1000.0
 
     def load_state(self):
@@ -210,7 +210,7 @@ class MulticoreMasterBot:
                     self.usdt_balance = s.get("usdt_balance", 0.0)
                     self.xaut_positions = s.get("xaut_positions", [])
                     return s.get("positions", {})
-            except: pass
+            except Exception: pass
         self.usdt_balance = 0.0
         return {}
 
@@ -222,11 +222,11 @@ class MulticoreMasterBot:
     def notify_ntfy(self, msg, title="BTC BOT"):
         try:
             requests.post(f"{self.ntfy_url}/{self.ntfy_topic}", data=msg.encode('utf-8'), headers={"Title": title}, timeout=5)
-        except: pass
+        except Exception: pass
 
     async def get_real_balance_async(self, a):
         try: return await self.exchange.get_balance(a)
-        except: return self.balance
+        except Exception: return self.balance
 
     @property
     def client(self): return getattr(self.exchange, 'client', None)
@@ -240,7 +240,7 @@ class MulticoreMasterBot:
                         ss = float(f['stepSize'])
                         prec = int(round(-math.log(ss, 10), 0))
                         return math.floor(qty * (10**prec)) / (10**prec)
-        except: pass
+        except Exception: pass
         return round(qty, 5)
 
     def _process_usdt(self, ts):
@@ -297,7 +297,7 @@ class MulticoreMasterBot:
 
     def _dissect_trade_failure(self, s, label):
         try: self.memory.record_failed_state(metrics=s.get('metrics',{}), cause=label)
-        except: pass
+        except Exception: pass
 
     async def run_async(self):
         iter_count = 0
@@ -337,7 +337,7 @@ class MulticoreMasterBot:
                         with signals_lock:
                             asset_signals[asset] = {'signal': fsig, 'prob': fconf, 'conviction': conv, 'reason': treason, 'price': price}
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
-                    except: pass
+                    except Exception: pass
 
                 await asyncio.gather(*(scan_asset(a) for a in self.assets))
                 
