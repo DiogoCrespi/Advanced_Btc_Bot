@@ -16,6 +16,11 @@ class BacktestEngine(BaseExchange):
         self.data: Optional[pd.DataFrame] = None
         self.current_index: int = 0
 
+        self._low_arr = None
+        self._high_arr = None
+        self._close_arr = None
+        self._index_arr = None
+
         self.active_orders: Dict[str, Dict[str, Any]] = {}
         self.trade_history: List[Dict[str, Any]] = []
 
@@ -29,6 +34,11 @@ class BacktestEngine(BaseExchange):
         """
         with self.lock:
             self.data = df.copy()
+            if not self.data.empty:
+                self._low_arr = self.data['low'].values
+                self._high_arr = self.data['high'].values
+                self._close_arr = self.data['close'].values
+                self._index_arr = self.data.index.values
             self.current_index = 0
 
     def set_current_index(self, index: int) -> None:
@@ -49,16 +59,17 @@ class BacktestEngine(BaseExchange):
             self.current_index += 1
 
             # Simple order processing: evaluate limit orders against new high/low
-            current_row = self.data.iloc[self.current_index]
+            current_low = self._low_arr[self.current_index]
+            current_high = self._high_arr[self.current_index]
             completed_orders = []
 
             for order_id, order in self.active_orders.items():
                 if order['type'] == 'LIMIT':
                     price = order.get('price', 0.0)
-                    if order['side'] == 'BUY' and current_row['low'] <= price:
+                    if order['side'] == 'BUY' and current_low <= price:
                         self._execute_order(order, price, is_maker=True)
                         completed_orders.append(order_id)
-                    elif order['side'] == 'SELL' and current_row['high'] >= price:
+                    elif order['side'] == 'SELL' and current_high >= price:
                         self._execute_order(order, price, is_maker=True)
                         completed_orders.append(order_id)
 
@@ -100,7 +111,7 @@ class BacktestEngine(BaseExchange):
                 self.balances[base_asset] -= fee_in_base
 
                 trade_record = {
-                    'timestamp': self.data.index[self.current_index] if self.data is not None else datetime.now(),
+                    'timestamp': pd.Timestamp(self._index_arr[self.current_index]) if self._index_arr is not None else datetime.now(),
                     'symbol': symbol,
                     'side': side,
                     'price': execute_price,
@@ -119,7 +130,7 @@ class BacktestEngine(BaseExchange):
                 self.balances[quote_asset] += (received_quote - fee_in_quote)
 
                 trade_record = {
-                    'timestamp': self.data.index[self.current_index] if self.data is not None else datetime.now(),
+                    'timestamp': pd.Timestamp(self._index_arr[self.current_index]) if self._index_arr is not None else datetime.now(),
                     'symbol': symbol,
                     'side': side,
                     'price': actual_price,
@@ -149,7 +160,7 @@ class BacktestEngine(BaseExchange):
 
             if order_type == 'MARKET':
                 if self.data is not None and len(self.data) > 0:
-                    current_price = float(self.data.iloc[self.current_index]['close'])
+                    current_price = float(self._close_arr[self.current_index])
                 else:
                     current_price = kwargs.get('simulated_price', 0.0) # Fallback for pure mocked execution
 
@@ -172,7 +183,7 @@ class BacktestEngine(BaseExchange):
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
         with self.lock:
             if self.data is not None and len(self.data) > 0:
-                price = float(self.data.iloc[self.current_index]['close'])
+                price = float(self._close_arr[self.current_index])
                 return {'symbol': symbol, 'price': str(price)}
             return {'symbol': symbol, 'price': '0.0'}
 
