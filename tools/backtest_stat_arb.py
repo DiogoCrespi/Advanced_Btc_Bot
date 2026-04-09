@@ -57,6 +57,11 @@ class StatArbBacktester:
         btc_close_arr = df_btc['Close'].values
         eth_close_arr = df_eth['Close'].values
 
+        self.execute_loop(common_index, z_score_arr, betas_arr, spread_arr, spread_mean_arr, btc_close_arr, eth_close_arr)
+
+        self.report()
+
+    def execute_loop(self, common_index, z_score_arr, betas_arr, spread_arr, spread_mean_arr, btc_close_arr, eth_close_arr):
         for i in range(100, len(common_index)):
             z = float(z_score_arr[i])
             beta = float(betas_arr[i])
@@ -96,8 +101,6 @@ class StatArbBacktester:
                     }
 
             self.risk.calculate_drawdown(self.risk.balance)
-
-        self.report()
 
     def report(self):
         roi = ((self.risk.balance - 10000) / 10000) * 100
