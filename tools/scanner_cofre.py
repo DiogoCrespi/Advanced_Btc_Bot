@@ -148,7 +148,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         try:
             yield_target = float(sys.argv[2])
-        except:
+        except ValueError:
             yield_target = 0.04
 
     scanner = ScannerCofreHibrido(asset_pair=pair, threshold_annual_yield=yield_target)
