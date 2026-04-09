@@ -139,15 +139,8 @@ class NewsFetcher:
         
         return self._cache or []   # return stale cache if available
 
-    def get_sentiment_keywords(self, articles: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
-        """
-        Returns a simple keyword-based sentiment summary from headlines.
-        Useful for IntelligenceManager without an LLM.
-        """
-        arts = articles if articles is not None else self.fetch()
-        if not arts:
-            return {"signal": "neutral", "score": 0.0, "article_count": 0}
-
+    def _calculate_keyword_score(self, arts: List[Dict[str, Any]]) -> float:
+        """Helper to calculate keyword-based sentiment score from articles."""
         BULLISH = {"rally", "surge", "soar", "bull", "breakout", "all-time high", "ath",
                    "recover", "adoption", "etf", "approval", "gain", "pump"}
         BEARISH = {"crash", "dump", "bear", "drop", "hack", "ban", "lawsuit", "sec",
@@ -163,9 +156,10 @@ class NewsFetcher:
                 if w in text:
                     score -= 1
 
-        normalized = float(max(-1.0, min(1.0, score / max(len(arts), 1))))
-        
-        # ─── Attempt 3: MiroFish Integration (Advanced) ──────────────────────
+        return float(max(-1.0, min(1.0, score / max(len(arts), 1))))
+
+    def _fetch_miro_score(self) -> tuple[float, bool]:
+        """Helper to fetch sentiment from MiroFish if available."""
         miro_score = 0.0
         has_miro = False
         if self.miro_client:
@@ -183,6 +177,22 @@ class NewsFetcher:
                 logger.debug("[MIROFISH] Simulation: %s | Sentiment: %s | Confidence: %.2f", self.simulation_id, sentiment, confidence)
             except Exception as e:
                 logger.warning("[MIROFISH] Sentiment fetch failed: %s", e)
+
+        return miro_score, has_miro
+
+    def get_sentiment_keywords(self, articles: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+        """
+        Returns a simple keyword-based sentiment summary from headlines.
+        Useful for IntelligenceManager without an LLM.
+        """
+        arts = articles if articles is not None else self.fetch()
+        if not arts:
+            return {"signal": "neutral", "score": 0.0, "article_count": 0}
+
+        normalized = self._calculate_keyword_score(arts)
+
+        # ─── Attempt 3: MiroFish Integration (Advanced) ──────────────────────
+        miro_score, has_miro = self._fetch_miro_score()
 
         # Combine scores (70/30 weight if MiroFish is available)
         if has_miro:
