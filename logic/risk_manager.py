@@ -45,7 +45,7 @@ class RiskManager:
                             help="Dynamic stop-loss percentage that follows price action upwards")
         parser.add_argument("--max-drawdown", type=float, default=None,
                             help="Daily account-wide drawdown limit to stop the bot for 24h")
-        parser.add_argument("--mode", choices=['aggressive', 'conservative', 'manual-override'], default=None,
+        parser.add_argument("--risk-mode", choices=['aggressive', 'conservative', 'manual-override'], default=None,
                             help="Risk mode")
 
         # Parse known args so we don't break if other parts of the app use argparse
@@ -56,7 +56,7 @@ class RiskManager:
         self.take_profit = args.take_profit if args.take_profit is not None else float(os.getenv("RISK_TAKE_PROFIT", "0.03"))
         self.trailing_stop = args.trailing_stop if args.trailing_stop is not None else float(os.getenv("RISK_TRAILING_STOP", "0.005"))
         self.max_drawdown = args.max_drawdown if args.max_drawdown is not None else float(os.getenv("RISK_MAX_DRAWDOWN", "0.05"))
-        self.mode = args.mode if args.mode is not None else os.getenv("RISK_MODE", "conservative")
+        self.mode = args.risk_mode if args.risk_mode is not None else os.getenv("RISK_MODE", "conservative")
         
         # Kelly Criterion Settings
         self.kelly_fractional = 0.5 # 0.5x Kelly (Fractional) for safety
