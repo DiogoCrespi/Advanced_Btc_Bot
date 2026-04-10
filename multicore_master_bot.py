@@ -177,7 +177,7 @@ class MulticoreMasterBot:
                     self.brains[asset].save_model(model_path)
                     self.stats[asset]["oos_score"] = score
 
-        asyncio.create_task(self._train_initial_evo_pop())
+        # Background tasks moved to main() to avoid "no running event loop" error
 
     def _log_worker(self):
         while True:
@@ -391,6 +391,7 @@ async def main(bot):
     await bot.exchange.initialize() if hasattr(bot.exchange, 'initialize') else None
     supervisor = WebSocketSupervisor(bot)
     asyncio.create_task(supervisor.start())
+    asyncio.create_task(bot._train_initial_evo_pop())
     await bot.run_async()
 
 if __name__ == "__main__":
