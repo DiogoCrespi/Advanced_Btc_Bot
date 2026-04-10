@@ -20,7 +20,7 @@ class DataEngine:
         """
         Busca klines historicos de um contrato de entrega.
         """
-        print(f"Fetching Delivery klines for {symbol}...")
+        # print(f"Fetching Delivery klines for {symbol}...")
         try:
             url = f"{self.dapi_url}/klines"
             params = {"symbol": symbol, "interval": interval, "limit": limit}
@@ -45,7 +45,7 @@ class DataEngine:
         Fetches Macro indicators: S&P 500 (^GSPC), DXY (DX-Y.NYB) and Gold (GC=F).
         Returns a dictionary with the % change of each.
         """
-        print("Fetching Macro Data (S&P 500 & DXY)...")
+        # print("Fetching Macro Data (S&P 500 & DXY)...")
         sp500_change = 0.0
         dxy_change = 0.0
         gold_change = 0.0
@@ -90,7 +90,7 @@ class DataEngine:
         Fetches historical data for the main and secondary symbols.
         Using yfinance for robust 5-year historical daily data.
         """
-        print(f"Fetching data for {self.symbol} and {self.secondary_symbol}...")
+        # print(f"Fetching data for {self.symbol} and {self.secondary_symbol}...")
         df_main = yf.download(self.symbol, period=self.period, interval=self.interval, progress=False)
         df_sec = yf.download(self.secondary_symbol, period=self.period, interval=self.interval, progress=False)
         
@@ -119,7 +119,7 @@ class DataEngine:
         
         # Binance permite buscar blocos de 1000. Vamos tentar buscar ate 5 blocos (5000 records ~ 4.5 anos)
         for _ in range(5):
-            print(f"Fetching funding batch for {symbol} (start: {current_start})...")
+            # print(f"Fetching funding batch for {symbol} (start: {current_start})...")
             params = {"symbol": symbol, "limit": 1000}
             if current_start:
                 params["startTime"] = int(current_start)
@@ -245,7 +245,7 @@ class DataEngine:
 
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": symbol, "interval": interval, "limit": limit}
-        print(f"Fetching Binance Klines for {symbol}...")
+        # print(f"Fetching Binance Klines for {symbol}...")
         
         try:
             response = requests.get(url, params=params, timeout=10)
