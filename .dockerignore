@@ -6,7 +6,8 @@ __pycache__
 *.pyd
 .db
 .sqlite
-data/
+data/*.parquet
+data/neo4j/
 results/
 models/*.pkl
 MiroFish/backend/uploads
