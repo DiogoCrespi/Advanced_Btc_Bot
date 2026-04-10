@@ -51,28 +51,29 @@ class DataEngine:
         gold_change = 0.0
         
         try:
-            # Download with short timeout and no progress bar
-            sp500 = yf.download("^GSPC", period=period, interval="1d", progress=False, timeout=5)
-            dxy = yf.download("DX-Y.NYB", period=period, interval="1d", progress=False, timeout=5)
-            gold = yf.download("GC=F", period=period, interval="1d", progress=False, timeout=5)
+            # Fetch with Ticker.history for better robustness in single symbol downloads
+            sp500_df = yf.Ticker("^GSPC").history(period=period, interval="1d")
+            dxy_df = yf.Ticker("DX-Y.NYB").history(period=period, interval="1d")
+            gold_df = yf.Ticker("GC=F").history(period=period, interval="1d")
             
             # 1. Process S&P 500
-            if sp500 is not None and not sp500.empty and len(sp500) >= 2:
-                if isinstance(sp500.columns, pd.MultiIndex): sp500.columns = sp500.columns.droplevel(1)
-                if 'Close' in sp500.columns:
-                    sp500_change = float((sp500['Close'].values[-1] / sp500['Close'].values[-2]) - 1)
+            if sp500_df is not None and not sp500_df.empty and len(sp500_df) >= 2:
+                # history() handles MultiIndex differently, usually single symbol is standard columns
+                close_col = 'Close' if 'Close' in sp500_df.columns else None
+                if close_col:
+                    sp500_change = float((sp500_df[close_col].values[-1] / sp500_df[close_col].values[-2]) - 1)
             
             # 2. Process DXY
-            if dxy is not None and not dxy.empty and len(dxy) >= 2:
-                if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
-                if 'Close' in dxy.columns:
-                    dxy_change = float((dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1)
+            if dxy_df is not None and not dxy_df.empty and len(dxy_df) >= 2:
+                close_col = 'Close' if 'Close' in dxy_df.columns else None
+                if close_col:
+                    dxy_change = float((dxy_df[close_col].values[-1] / dxy_df[close_col].values[-2]) - 1)
             
             # 3. Process Gold (GC=F)
-            if gold is not None and not gold.empty and len(gold) >= 2:
-                if isinstance(gold.columns, pd.MultiIndex): gold.columns = gold.columns.droplevel(1)
-                if 'Close' in gold.columns:
-                    gold_change = float((gold['Close'].values[-1] / gold['Close'].values[-2]) - 1)
+            if gold_df is not None and not gold_df.empty and len(gold_df) >= 2:
+                close_col = 'Close' if 'Close' in gold_df.columns else None
+                if close_col:
+                    gold_change = float((gold_df[close_col].values[-1] / gold_df[close_col].values[-2]) - 1)
 
         except Exception as e:
             # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot

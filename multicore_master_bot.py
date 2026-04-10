@@ -289,7 +289,7 @@ class MulticoreMasterBot:
         for dna in self.evo_engine.population:
             for asset in self.assets:
                 brain = self.evo_brains[dna.id][asset]
-                df = self.engine.fetch_binance_klines(asset, limit=500)
+                df = self.engine.fetch_binance_klines(asset, limit=1000)
                 if not df.empty:
                     df = self.engine.apply_indicators(df)
                     tasks.append(loop.run_in_executor(self.executor, brain.train, df))
