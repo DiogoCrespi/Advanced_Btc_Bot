@@ -343,7 +343,9 @@ class MulticoreMasterBot:
                 
                 # Agent Decision
                 tier2 = sum([s['signal'] for s in asset_signals.values()])
-                agent_res = self.agent.run({'tier2': tier2}, {'news_sentiment': news_sent})
+                agent_macro = macro_data.copy()
+                agent_macro['news_sentiment'] = news_sent
+                agent_res = self.agent.run({'tier2': tier2}, agent_macro)
                 final_mult = agent_res['allocation_mult']
                 
                 # Loop de Execucao

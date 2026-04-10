@@ -49,7 +49,12 @@ class StrategistAgent:
     def _node_analyze_macro(self, state: StrategistState):
         md = state['macro_data']
         news_sent = md.get('news_sentiment', 0.0) 
-        score = self.radar.get_macro_score(md.get('dxy_change', 0), md.get('sp500_change', 0), news_sent)
+        score = self.radar.get_macro_score(
+            md.get('dxy_change', 0), 
+            md.get('sp500_change', 0), 
+            md.get('gold_change', 0), 
+            news_sent
+        )
         state['risk_score'] = score
         state['reasoning'].append(f"Macro Risk Score: {score:.2f}")
         return state
@@ -166,6 +171,6 @@ if __name__ == "__main__":
     agent = StrategistAgent()
     res = agent.run(
         signals={'tier1': 0.08, 'tier2': 1}, 
-        macro_data={'dxy_change': 0.01, 'sp500_change': -0.015} # Risk Off!
+        macro_data={'dxy_change': 0.01, 'sp500_change': -0.015, 'gold_change': 0} # Risk Off!
     )
     print(json.dumps(res, indent=2))

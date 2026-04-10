@@ -57,22 +57,22 @@ class DataEngine:
             gold = yf.download("GC=F", period=period, interval="1d", progress=False, timeout=5)
             
             # 1. Process S&P 500
-            if not sp500.empty and len(sp500) >= 2:
+            if sp500 is not None and not sp500.empty and len(sp500) >= 2:
                 if isinstance(sp500.columns, pd.MultiIndex): sp500.columns = sp500.columns.droplevel(1)
-                # Bolt optimization: replaced slow Pandas .iloc[-1] with .values[-1] to index numpy array directly
-                sp500_change = float((sp500['Close'].values[-1] / sp500['Close'].values[-2]) - 1)
+                if 'Close' in sp500.columns:
+                    sp500_change = float((sp500['Close'].values[-1] / sp500['Close'].values[-2]) - 1)
             
             # 2. Process DXY
-            if not dxy.empty and len(dxy) >= 2:
+            if dxy is not None and not dxy.empty and len(dxy) >= 2:
                 if isinstance(dxy.columns, pd.MultiIndex): dxy.columns = dxy.columns.droplevel(1)
-                # Bolt optimization: replaced slow Pandas .iloc[-1] with .values[-1] to index numpy array directly
-                dxy_change = float((dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1)
+                if 'Close' in dxy.columns:
+                    dxy_change = float((dxy['Close'].values[-1] / dxy['Close'].values[-2]) - 1)
             
             # 3. Process Gold (GC=F)
-            if not gold.empty and len(gold) >= 2:
+            if gold is not None and not gold.empty and len(gold) >= 2:
                 if isinstance(gold.columns, pd.MultiIndex): gold.columns = gold.columns.droplevel(1)
-                # Bolt optimization: replaced slow Pandas .iloc[-1] with .values[-1] to index numpy array directly
-                gold_change = float((gold['Close'].values[-1] / gold['Close'].values[-2]) - 1)
+                if 'Close' in gold.columns:
+                    gold_change = float((gold['Close'].values[-1] / gold['Close'].values[-2]) - 1)
 
         except Exception as e:
             # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot

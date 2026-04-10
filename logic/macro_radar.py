@@ -66,7 +66,7 @@ class MacroRadar:
 
 if __name__ == "__main__":
     radar = MacroRadar()
-    # Simulacao: DXY subiu 0.5%, S&P 500 subiu 1%, Noticias Neutras (0)
-    score = radar.get_macro_score(0.005, 0.01, 0)
+    # Simulacao: DXY subiu 0.5%, S&P 500 subiu 1%, Ouro neutro, Noticias Neutras (0)
+    score = radar.get_macro_score(0.005, 0.01, 0, 0)
     mult, reason = radar.get_recommended_position_mult()
     print(f"Macro Score: {score:.2f} | Multiplicador: {mult} | Razao: {reason}")
