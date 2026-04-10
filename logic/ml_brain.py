@@ -125,7 +125,7 @@ class MLBrain:
             split_idx = int(len(X) * 0.8)
             X_train, y_train = X[:split_idx], y[:split_idx]
             
-            test_start = split_idx + horizon + 10 # Purge gap + embargo
+            test_start = split_idx + _hz + 10 # Purge gap + embargo
             X_test, y_test = X[test_start:], y[test_start:]
             
             if len(X_train) == 0 or len(X_test) == 0:
