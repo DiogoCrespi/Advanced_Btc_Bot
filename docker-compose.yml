@@ -75,13 +75,3 @@ services:
     networks:
       - quant_net
 
-  # 5. Push Notifications Engine
-  ntfy:
-    image: binwiederhier/ntfy:latest
-    container_name: btc_ntfy
-    restart: unless-stopped
-    command: serve
-    ports:
-      - "8081:80"
-    networks:
-      - quant_net

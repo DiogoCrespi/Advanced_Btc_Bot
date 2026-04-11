@@ -171,8 +171,8 @@ class MulticoreMasterBot:
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
         self.risk_manager = RiskManager()
-        self.ntfy_url = "http://ntfy"
-        self.ntfy_topic = os.getenv("NTFY_TOPIC", "btc_bot_trades")
+        self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -245,12 +245,23 @@ class MulticoreMasterBot:
             st = {"balance": self.balance, "usdt_balance": self.usdt_balance, "positions": self.positions, "xaut_positions": self.xaut_positions}
         self.log_queue.put(("save_state", (self.status_file, st)))
 
-    def notify_ntfy(self, msg, title="BTC BOT"):
+    def notify_telegram(self, msg, title="BTC BOT"):
         # Log para o dashboard
         self.dashboard_logs.appendleft(msg)
+        if not self.telegram_token or not self.telegram_chat_id or "seu_token" in self.telegram_token:
+            return
+
         try:
-            requests.post(f"{self.ntfy_url}/{self.ntfy_topic}", data=msg.encode('utf-8'), headers={"Title": title}, timeout=5)
-        except Exception: pass
+            full_msg = f"<b>[{title}]</b>\n{msg}"
+            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+            payload = {
+                "chat_id": self.telegram_chat_id,
+                "text": full_msg,
+                "parse_mode": "HTML"
+            }
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"[TELEGRAM] Erro ao enviar: {e}")
 
     def _render_dashboard(self, ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res):
         """Builds the stylized console UI as requested by the user."""
@@ -382,7 +393,7 @@ class MulticoreMasterBot:
                 p_pnl = (ratio / p['ratio_entry'] - 1)
                 latent_pnl += (p['xaut_qty'] * ratio) - p['cost_btc']
                 if p_pnl > 0.04 or p_pnl < -0.02: 
-                    self.notify_ntfy(f"FECHADO XAUT: {p_pnl:+.2%}", title="XAUT EXIT")
+                    self.notify_telegram(f"FECHADO XAUT: {p_pnl:+.2%}", title="XAUT EXIT")
                 else: rem.append(p)
             self.xaut_positions = rem
         
@@ -506,7 +517,7 @@ class MulticoreMasterBot:
                         act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD")
                         if exit_r or act == 'SELL':
                             self.balance += p['cost'] * (1 + pnl - 0.002)
-                            self.notify_ntfy(f"FECHADO {asset}: {exit_r or r_reason} ({pnl:+.2%})")
+                            self.notify_telegram(f"FECHADO {asset}: {exit_r or r_reason} ({pnl:+.2%})")
                         else: rem.append(p)
                     self.positions[asset] = rem
 
@@ -522,7 +533,7 @@ class MulticoreMasterBot:
                             if dec == "APPROVE":
                                 self.balance -= sizing
                                 self.positions[asset].append({"entry": s['price'], "signal": s['signal'], "qty": sizing/s['price'], "cost": sizing, "time": ts})
-                                self.notify_ntfy(f"ABERTO {asset}: R$ {sizing:.2f}")
+                                self.notify_telegram(f"ABERTO {asset}: R$ {sizing:.2f}")
 
                 # Post-Loop Analysis
                 usdt_data = self._process_usdt(self.macro_risk)
