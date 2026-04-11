@@ -234,47 +234,71 @@ class DataEngine:
     def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000):
         """
         Fetches historical klines from Binance Spot API including Taker Volume.
+        Supports multiple fallback endpoints and retries on connection errors.
         """
         cache_key = f"{symbol}_{interval}_{limit}"
         now = time.time()
         if cache_key in self._klines_cache:
             cache_time, cached_df = self._klines_cache[cache_key]
             if now - cache_time < 15:
-                # print(f"Using cached Binance Klines for {symbol}...")
                 return cached_df.copy()
 
-        url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": symbol, "interval": interval, "limit": limit}
-        print(f"Fetching Binance Klines for {symbol}...")
+        # Alternative endpoints for better resilience
+        endpoints = [
+            "https://api.binance.com/api/v3/klines",
+            "https://api1.binance.com/api/v3/klines",
+            "https://api2.binance.com/api/v3/klines",
+            "https://api3.binance.com/api/v3/klines"
+        ]
         
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            
-            df = pd.DataFrame(data, columns=[
-                'open_time', 'open', 'high', 'low', 'close', 'volume',
-                'close_time', 'quote_volume', 'count', 
-                'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
-            ])
-            
-            # Convert to numeric
-            cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
-            df[cols] = df[cols].apply(pd.to_numeric)
-            
-            df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-            df.set_index('open_time', inplace=True)
-            
-            # Calculate CVD (Cumulative Volume Delta)
-            df['buy_vol'] = df['taker_buy_base_volume']
-            df['sell_vol'] = df['volume'] - df['buy_vol']
-            df['delta'] = df['buy_vol'] - df['sell_vol']
-            df['CVD'] = df['delta'].cumsum()
-            
-            self._klines_cache[cache_key] = (time.time(), df)
-            return df.copy()
-        except Exception as e:
-            print(f"Error fetching Binance Klines: {e}")
-            return pd.DataFrame()
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            for url in endpoints:
+                try:
+                    # print(f"Attempting {url} (Attempt {attempt+1})...")
+                    response = requests.get(url, params=params, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        df = pd.DataFrame(data, columns=[
+                            'open_time', 'open', 'high', 'low', 'close', 'volume',
+                            'close_time', 'quote_volume', 'count', 
+                            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+                        ])
+                        
+                        # Convert to numeric
+                        cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
+                        df[cols] = df[cols].apply(pd.to_numeric)
+                        
+                        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+                        df.set_index('open_time', inplace=True)
+                        
+                        # Calculate CVD (Cumulative Volume Delta)
+                        df['buy_vol'] = df['taker_buy_base_volume']
+                        df['sell_vol'] = df['volume'] - df['buy_vol']
+                        df['delta'] = df['buy_vol'] - df['sell_vol']
+                        df['CVD'] = df['delta'].cumsum()
+                        
+                        self._klines_cache[cache_key] = (time.time(), df)
+                        return df.copy()
+                    elif response.status_code == 429:
+                        print(f"[WARN] Binance Rate Limit hit (429). Waiting...")
+                        time.sleep(2 ** attempt)
+                    else:
+                        print(f"[WARN] Binance API {url} returned {response.status_code}")
+                except Exception as e:
+                    print(f"[ERROR] Connection to {url} failed: {e}")
+                    continue # Try next endpoint
+
+            # If all endpoints failed in this attempt, wait and retry
+            print(f"[RETRY] All Binance endpoints failed. Retrying in {2 ** attempt}s...")
+            time.sleep(2 ** attempt)
+
+        print(f"[CRITICAL] Failed to fetch Binance Klines for {symbol} after {max_retries} attempts.")
+        return pd.DataFrame()
+
 
     def fetch_xaut_ratio(self, limit: int = 300) -> pd.DataFrame:
         """

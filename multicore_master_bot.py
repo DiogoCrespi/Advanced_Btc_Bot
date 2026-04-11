@@ -70,18 +70,35 @@ class WebSocketSupervisor:
 
     async def _run_socket_session(self):
         if not self.bot.client:
-            await asyncio.sleep(5)
-            raise Exception("Binance Client nulo")
-        bm = BinanceSocketManager(self.bot.client)
-        streams = [f"{s.lower()}@ticker" for s in self.bot.assets]
-        if "usdtbrl@ticker" not in streams: streams.append("usdtbrl@ticker")
-        async with bm.multiplex_socket(streams) as stream:
-            while True:
-                res = await asyncio.wait_for(stream.recv(), timeout=15)
-                if res and 'data' in res:
-                    data = res['data']; symbol = data['s']
-                    self.bot.live_prices[symbol] = float(data['c'])
-                self._backoff_delay = 1
+            self.logger.warning("[SUPERVISOR] Binance Client nulo. Tentando inicializar em breve...")
+            # Tenta inicializar se possível
+            if hasattr(self.bot.exchange, 'initialize'):
+                try:
+                    await self.bot.exchange.initialize()
+                except Exception as e:
+                    self.logger.error(f"[SUPERVISOR] Falha ao inicializar client: {e}")
+            await asyncio.sleep(10)
+            return # Retorna para o loop do start() que vai chamar de novo
+
+        try:
+            bm = BinanceSocketManager(self.bot.client)
+            streams = [f"{s.lower()}@ticker" for s in self.bot.assets]
+            if "usdtbrl@ticker" not in streams: streams.append("usdtbrl@ticker")
+            
+            self.logger.info(f"[SUPERVISOR] Iniciando Multiplex Socket para {len(streams)} streams...")
+            async with bm.multiplex_socket(streams) as stream:
+                while True:
+                    res = await asyncio.wait_for(stream.recv(), timeout=30)
+                    if res and 'data' in res:
+                        data = res['data']; symbol = data['s']
+                        self.bot.live_prices[symbol] = float(data['c'])
+                    self._backoff_delay = 1
+        except asyncio.TimeoutError:
+            self.logger.warning("[SUPERVISOR] Timeout no WebSocket. Reiniciando...")
+        except Exception as e:
+            self.logger.error(f"[SUPERVISOR] Erro no socket: {e}")
+            raise # Deixa o start() lidar com o backoff
+
 
     async def _handle_reconnection(self):
         for s in self.bot.assets: self.bot.live_prices[s] = 0.0
@@ -328,7 +345,9 @@ class MulticoreMasterBot:
 
     def _process_usdt(self, macro_risk):
         df = self.engine.fetch_usdt_brl_data(limit=100)
-        if df.empty: return {"price": 0, "rsi": 50, "balance": self.usdt_balance}
+        if df.empty: 
+            # Fallback to a safe approximate price if no data available to avoid 0 equity
+            return {"price": 5.50, "rsi": 50, "balance": self.usdt_balance}
         price = float(df['close'].values[-1])
         sig, conf, reason, metrics = self.usdt_logic.get_signal(df, macro_risk)
         dec, areason = self.agent.assess_usdt_opportunity(sig, conf, reason)
@@ -507,9 +526,14 @@ class MulticoreMasterBot:
                         self.total_equity += p['cost'] * (1 + p_pnl)
                 
                 # Add XAUT value to equity (converting BTC to BRL)
+                # Fallback to a high-last-resort price if BTCBRL fetch fails, or use opening entry if available
                 btc_price = asset_signals.get("BTCBRL", {}).get("price", 0.0)
+                if btc_price == 0.0 and "BTCBRL" in self.live_prices:
+                    btc_price = self.live_prices["BTCBRL"]
+                
                 for p in self.xaut_positions:
-                    self.total_equity += p['cost_btc'] * btc_price * (xaut_data['ratio'] / p['ratio_entry'] if 'ratio_entry' in p else 1.0)
+                    eff_btc_price = btc_price if btc_price > 0 else (p.get('btc_entry_price', 350000.0))
+                    self.total_equity += p['cost_btc'] * eff_btc_price * (xaut_data['ratio'] / p['ratio_entry'] if 'ratio_entry' in p else 1.0)
 
                 self.save_balance(); self.save_state()
                 self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)

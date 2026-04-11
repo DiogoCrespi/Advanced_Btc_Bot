@@ -1,0 +1,6 @@
+REFERENCIAS/
+node_modules/
+.venv/
+data/
+results/
+.git/

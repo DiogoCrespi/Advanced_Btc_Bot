@@ -15,22 +15,36 @@ class BinanceTestnet(BaseExchange):
             print("[ERRO FATAL] Chaves de API ausentes para o Testnet!")
             sys.exit(1)
 
-    async def initialize(self):
-        """Initialize the AsyncClient for Testnet."""
-        try:
-            # Note: The testnet parameter tells python-binance to use the testnet endpoints
-            self.client = await AsyncClient.create(self.api_key, self.api_secret, testnet=True)
-            account_info = await self.client.get_account()
-            if not account_info.get('canTrade'):
-                print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada no Testnet!")
-                sys.exit(1)
-            print("✅ Conectado na Binance (TESTNET)! Permissao de leitura/trading ativa.")
-        except BinanceAPIException as e:
-            print(f"[ERRO FATAL] Credenciais rejeitadas pelo Testnet da Binance: {e}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[ERRO FATAL] Falha de rede ao conectar com a Binance (Testnet): {e}")
-            sys.exit(1)
+    async def initialize(self, max_retries: int = 5):
+        """Initialize the AsyncClient for Testnet with retries."""
+        last_err = None
+        for attempt in range(max_retries):
+            try:
+                if self.client:
+                    try: await self.client.close_connection()
+                    except: pass
+                    
+                self.client = await AsyncClient.create(self.api_key, self.api_secret, testnet=True)
+                account_info = await self.client.get_account()
+                if not account_info.get('canTrade'):
+                    print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada no Testnet!")
+                    sys.exit(1)
+                print("✅ Conectado na Binance (TESTNET)! Permissao de leitura/trading ativa.")
+                return
+            except BinanceAPIException as e:
+                if e.status_code in [401, 403]:
+                    print(f"[ERRO FATAL] Credenciais rejeitadas (API Key/Secret invalida) no Testnet: {e}")
+                    sys.exit(1)
+                last_err = e
+            except Exception as e:
+                last_err = e
+            
+            wait_time = 2 ** attempt
+            print(f"[WARN] Falha ao inicializar Binance Testnet (tentativa {attempt+1}/{max_retries}): {last_err}. Retentando em {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+        print(f"[ERRO CRITICO] Nao foi possivel conectar ao Testnet apos {max_retries} tentativas. O bot seguira tentando em background.")
+
 
     async def get_balance(self, asset: str = 'BRL') -> float:
         try:
