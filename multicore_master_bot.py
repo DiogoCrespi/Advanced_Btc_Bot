@@ -435,7 +435,7 @@ class MulticoreMasterBot:
                 asset_signals = {}; signals_lock = Lock()
                 async def scan_asset(asset):
                     try:
-                        df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 200)
+                        df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
                         if df.empty: return
                         df = self.engine.apply_indicators(df)
                         brain = self.brains[asset]
