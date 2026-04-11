@@ -16,17 +16,54 @@ class DataEngine:
         self.dapi_url = "https://dapi.binance.com/dapi/v1"
         self._klines_cache = {}
 
+    def _make_request(self, subdomain, path, params=None, max_retries=3):
+        """
+        Helper para disparar chamadas HTTP resilientes para a Binance.
+        Alterna entre enderecos principais e fallbacks (ex: api, api1, api2, api3).
+        """
+        # Define os enderecos base para cada subdominio
+        base_urls = [f"https://{subdomain}.binance.com"]
+        # Fallbacks conhecidos para api, fapi, dapi
+        for i in range(1, 4):
+            base_urls.append(f"https://{subdomain}{i}.binance.com")
+            
+        last_err = None
+        for attempt in range(max_retries):
+            for base_url in base_urls:
+                url = f"{base_url}{path}"
+                try:
+                    # Timeout generico de 10s
+                    response = requests.get(url, params=params, timeout=10)
+                    if response.status_code == 200:
+                        return response.json()
+                    elif response.status_code == 429:
+                        # Rate limit: espera mais tempo
+                        wait = (attempt + 1) * 5
+                        print(f"[WARN] Binance Rate Limit (429) em {url}. Esperando {wait}s...")
+                        time.sleep(wait)
+                    else:
+                        print(f"[WARN] Binance API {url} retornou HTTP {response.status_code}")
+                except Exception as e:
+                    last_err = e
+                    # Tenta o proximo fallback imediatamente se for erro de conexao
+                    continue
+            
+            # Se terminou todos os fallbacks sem sucesso, espera e tenta novamente a proxima tentativa
+            wait_time = 2 ** attempt
+            print(f"[RETRY] Todos os fallbacks para {subdomain}{path} falharam. Tentativa {attempt+1}/{max_retries}. Esperando {wait_time}s... Erro: {last_err}")
+            time.sleep(wait_time)
+            
+        return None
+
     def fetch_delivery_klines(self, symbol, interval="1h", limit=1000):
         """
         Busca klines historicos de um contrato de entrega.
         """
         print(f"Fetching Delivery klines for {symbol}...")
+        data = self._make_request('dapi', "/dapi/v1/klines", params={"symbol": symbol, "interval": interval, "limit": limit})
+        if not data: return pd.DataFrame()
+        
         try:
-            url = f"{self.dapi_url}/klines"
-            params = {"symbol": symbol, "interval": interval, "limit": limit}
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            
             df = pd.DataFrame(data, columns=[
                 'open_time', 'open', 'high', 'low', 'close', 'volume',
                 'close_time', 'base_volume', 'count', 'taker_buy_volume',
@@ -37,7 +74,7 @@ class DataEngine:
             df.set_index('open_time', inplace=True)
             return df[['close']]
         except Exception as e:
-            print(f"Exception fetching delivery klines: {e}")
+            print(f"Exception processing delivery klines: {e}")
             return pd.DataFrame()
 
     def fetch_macro_data(self, period="30d"):
@@ -124,11 +161,9 @@ class DataEngine:
             if current_start:
                 params["startTime"] = int(current_start)
                 
-            try:
-                response = requests.get(self.funding_url, params=params, timeout=10)
-                data = response.json()
-                if not isinstance(data, list) or not data:
-                    break
+            data = self._make_request('fapi', "/fapi/v1/fundingRate", params=params)
+            if not isinstance(data, list) or not data:
+                break
                     
                 df_batch = pd.DataFrame(data)
                 all_funding.append(df_batch)
@@ -154,16 +189,11 @@ class DataEngine:
         Retorna todos os contratos de entrega (Quarterly) ativos para um ativo.
         """
         print(f"[DEBUG] Entrando em fetch_delivery_contracts para {asset}...")
+        data = self._make_request('dapi', "/dapi/v1/exchangeInfo")
+        if not data: return []
+        
         try:
-            url = f"{self.dapi_url}/exchangeInfo"
-            print(f"[DEBUG] Fazendo requests.get para {url}...")
-            response = requests.get(url, timeout=10)
-            print(f"[DEBUG] Resposta recebida. Status: {response.status_code}")
-            data = response.json()
             symbols = data.get('symbols', [])
-            
-            # Filtrar contratos CURRENT QUARTER ou NEXT QUARTER
-            # Geralmente possuem formato BTCUSD_210625
             quarterly_contracts = [
                 s for s in symbols 
                 if s['baseAsset'] == asset and s['contractType'] in ['CURRENT_QUARTER', 'NEXT_QUARTER']
@@ -171,7 +201,7 @@ class DataEngine:
             print(f"[DEBUG] Saindo de fetch_delivery_contracts. Encontrados: {len(quarterly_contracts)}")
             return quarterly_contracts
         except Exception as e:
-            print(f"Exception fetching delivery contracts: {e}")
+            print(f"Exception processing delivery contracts: {e}")
             return []
 
     def fetch_basis_data(self, spot_symbol="BTCUSDT", delivery_symbol="BTCUSD_250627"):
@@ -181,10 +211,8 @@ class DataEngine:
         """
         try:
             # 1. Spot Price
-            spot_url = "https://api.binance.com/api/v3/ticker/price"
-            spot_resp = requests.get(spot_url, params={"symbol": spot_symbol}, timeout=10)
-            spot_data = spot_resp.json()
-            if 'price' not in spot_data:
+            spot_data = self._make_request('api', "/api/v3/ticker/price", params={"symbol": spot_symbol})
+            if not spot_data or 'price' not in spot_data:
                 print(f"Error fetching spot: {spot_data}")
                 return None
             spot_price_raw = float(spot_data['price'])
@@ -192,19 +220,16 @@ class DataEngine:
             # 2. USDBRL Rate (if needed)
             usd_brl = 1.0
             if "BRL" in spot_symbol:
-                # Fetch USDTBRL as a proxy for USDBRL on Binance
-                fx_resp = requests.get(spot_url, params={"symbol": "USDTBRL"}, timeout=10)
-                fx_data = fx_resp.json()
-                if 'price' in fx_data:
+                fx_data = self._make_request('api', "/api/v3/ticker/price", params={"symbol": "USDTBRL"})
+                if fx_data and 'price' in fx_data:
                     usd_brl = float(fx_data['price'])
             
             # Normalize spot price to USD
             spot_price_usd = spot_price_raw / usd_brl
             
             # 3. Delivery Price
-            delivery_url = f"{self.dapi_url}/ticker/bookTicker"
-            delivery_resp = requests.get(delivery_url, params={"symbol": delivery_symbol}, timeout=10)
-            delivery_data = delivery_resp.json()
+            delivery_data = self._make_request('dapi', "/dapi/v1/ticker/bookTicker", params={"symbol": delivery_symbol})
+            if not delivery_data: return None
             
             if isinstance(delivery_data, list):
                 delivery_data = delivery_data[0]
@@ -243,60 +268,35 @@ class DataEngine:
             if now - cache_time < 15:
                 return cached_df.copy()
 
-        # Alternative endpoints for better resilience
-        endpoints = [
-            "https://api.binance.com/api/v3/klines",
-            "https://api1.binance.com/api/v3/klines",
-            "https://api2.binance.com/api/v3/klines",
-            "https://api3.binance.com/api/v3/klines"
-        ]
-        
         params = {"symbol": symbol, "interval": interval, "limit": limit}
-        max_retries = 3
+        data = self._make_request('api', "/api/v3/klines", params=params)
         
-        for attempt in range(max_retries):
-            for url in endpoints:
-                try:
-                    # print(f"Attempting {url} (Attempt {attempt+1})...")
-                    response = requests.get(url, params=params, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        df = pd.DataFrame(data, columns=[
-                            'open_time', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'count', 
-                            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
-                        ])
-                        
-                        # Convert to numeric
-                        cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
-                        df[cols] = df[cols].apply(pd.to_numeric)
-                        
-                        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-                        df.set_index('open_time', inplace=True)
-                        
-                        # Calculate CVD (Cumulative Volume Delta)
-                        df['buy_vol'] = df['taker_buy_base_volume']
-                        df['sell_vol'] = df['volume'] - df['buy_vol']
-                        df['delta'] = df['buy_vol'] - df['sell_vol']
-                        df['CVD'] = df['delta'].cumsum()
-                        
-                        self._klines_cache[cache_key] = (time.time(), df)
-                        return df.copy()
-                    elif response.status_code == 429:
-                        print(f"[WARN] Binance Rate Limit hit (429). Waiting...")
-                        time.sleep(2 ** attempt)
-                    else:
-                        print(f"[WARN] Binance API {url} returned {response.status_code}")
-                except Exception as e:
-                    print(f"[ERROR] Connection to {url} failed: {e}")
-                    continue # Try next endpoint
-
-            # If all endpoints failed in this attempt, wait and retry
-            print(f"[RETRY] All Binance endpoints failed. Retrying in {2 ** attempt}s...")
-            time.sleep(2 ** attempt)
-
-        print(f"[CRITICAL] Failed to fetch Binance Klines for {symbol} after {max_retries} attempts.")
+        if data:
+            try:
+                df = pd.DataFrame(data, columns=[
+                    'open_time', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_volume', 'count', 
+                    'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+                ])
+                
+                # Convert to numeric
+                cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
+                df[cols] = df[cols].apply(pd.to_numeric)
+                
+                df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+                df.set_index('open_time', inplace=True)
+                
+                # Calculate CVD (Cumulative Volume Delta)
+                df['buy_vol'] = df['taker_buy_base_volume']
+                df['sell_vol'] = df['volume'] - df['buy_vol']
+                df['delta'] = df['buy_vol'] - df['sell_vol']
+                df['CVD'] = df['delta'].cumsum()
+                
+                self._klines_cache[cache_key] = (time.time(), df)
+                return df.copy()
+            except Exception as e:
+                print(f"Error processing Binance Klines for {symbol}: {e}")
+        
         return pd.DataFrame()
 
 
