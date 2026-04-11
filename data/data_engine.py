@@ -161,9 +161,10 @@ class DataEngine:
             if current_start:
                 params["startTime"] = int(current_start)
                 
-            data = self._make_request('fapi', "/fapi/v1/fundingRate", params=params)
-            if not isinstance(data, list) or not data:
-                break
+            try:
+                data = self._make_request('fapi', "/fapi/v1/fundingRate", params=params)
+                if not isinstance(data, list) or not data:
+                    break
                     
                 df_batch = pd.DataFrame(data)
                 all_funding.append(df_batch)
