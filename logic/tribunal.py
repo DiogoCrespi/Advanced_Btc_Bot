@@ -51,7 +51,9 @@ class ConsensusTribunal:
         active_sigs = [s for s in all_sigs if s != 0]
         
         if not active_sigs:
-            return 0, 0.0, "Consenso: Neutro"
+            # Fallback for visibility: use live prob even if signal is 0
+            live_prob = signals.get('live', {}).get('prob', 0.0)
+            return 0, live_prob, "Consenso: Neutro"
             
         # Contagem de votos
         buy_votes = len([s for s in all_sigs if s == 1])

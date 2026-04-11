@@ -40,7 +40,7 @@ load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
 import logging
 
-def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0):
+def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0, min_conf=0.45):
     try:
         df['macro_risk'] = macro_risk
         df['btc_dominance'] = btc_dom
@@ -50,7 +50,7 @@ def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0):
         current_price = float(df['close'].values[-1])
         curr_feat = df[brain.feature_cols].values[-1]
         
-        signal, prob, reason = brain.predict_signal(curr_feat)
+        signal, prob, reason = brain.predict_signal(curr_feat, min_confidence=min_conf)
         return signal, prob, reason, current_price
     except Exception as e:
         return 0, 0.0, f"Erro Predicao: {e}", 0.0
@@ -298,7 +298,7 @@ class MulticoreMasterBot:
             if sig['prob'] > 0.70: conv_label = "Confluencia ML"
             if sig['prob'] > 0.85: conv_label = "ALTA CONVICCAO"
             
-            alpha += f"| {asset:8} : {sig['signal']:>2} | Prob: {sig['prob']:>5.1%} | {conv_label} ({sig['prob']:.1%}) |\n"
+            alpha += f"| {asset:8} : {sig['signal']:>2} | Prob: {sig['prob']:>5.1%} | {conv_label} ({sig['prob']:.1%}) | {sig['reason']:<20} |\n"
         
         alpha += f"| [STRATEGIST] Decisao: {agent_res['decision']:8} | Mult: {agent_res['allocation_mult']:.2f} |\n"
         alpha += f"+{'-'*80}+\n"
@@ -451,7 +451,8 @@ class MulticoreMasterBot:
                             brain, 
                             df,
                             self.macro_risk,
-                            self.btc_dominance
+                            self.btc_dominance,
+                            0.45  # Lowered threshold to 0.45
                         )
                         
                         f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
