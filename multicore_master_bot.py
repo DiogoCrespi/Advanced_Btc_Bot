@@ -187,6 +187,7 @@ class MulticoreMasterBot:
         self.positions = self.load_state()
         self.total_equity = self.balance
         self.dashboard_logs = deque(maxlen=5)
+        self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55) # Primeiro report em 5 min
         
         print("[INIT] Booting Multicore Brains...")
         os.makedirs("models", exist_ok=True)
@@ -578,6 +579,22 @@ class MulticoreMasterBot:
                 self.save_balance(); self.save_state()
                 self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)
                 
+                # Relatorio Periodico (Heartbeat) - Cada 4 horas
+                if datetime.now() - self.last_status_report > timedelta(hours=4):
+                    pos_count = sum(len(p) if isinstance(p, list) else 1 for p in self.positions.values() if p)
+                    status_msg = (
+                        f"🛡️ <b>BOT STATUS REPORT</b>\n"
+                        f"--------------------------------\n"
+                        f"💰 <b>Equity:</b> R$ {self.total_equity:,.2f}\n"
+                        f"💵 <b>Saldo:</b> R$ {self.balance:,.2f}\n"
+                        f"📊 <b>Posições:</b> {pos_count} abertas\n"
+                        f"🕒 <b>Hora:</b> {ts}\n"
+                        f"--------------------------------\n"
+                        f"✅ <i>Bot operando normalmente.</i>"
+                    )
+                    self.notify_telegram(status_msg, title="STATUS")
+                    self.last_status_report = datetime.now()
+
             except Exception as e: print(f"Error: {e}")
             await asyncio.sleep(30)
 
