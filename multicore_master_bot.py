@@ -425,10 +425,25 @@ class MulticoreMasterBot:
             try:
                 ts = datetime.now().strftime('%H:%M:%S')
                 loop = asyncio.get_running_loop()
-                macro_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
-                miro_task = loop.run_in_executor(self.executor, self.miro_client.get_sentiment_summary, self.miro_sim_id)
-                btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
-                macro_data, miro_data, self.btc_dominance = await asyncio.gather(macro_task, miro_task, btc_dom_task)
+                # Fetch Macro, Sentiment and BTC Dominance with Timeouts
+                try:
+                    macro_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
+                    miro_task = loop.run_in_executor(self.executor, self.miro_client.get_sentiment_summary, self.miro_sim_id)
+                    btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
+                    
+                    macro_data, miro_data, self.btc_dominance = await asyncio.wait_for(
+                        asyncio.gather(macro_task, miro_task, btc_dom_task),
+                        timeout=20.0
+                    )
+                except asyncio.TimeoutError:
+                    print("[WARN] Timeout buscando dados externos. Usando fallbacks...")
+                    macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
+                    miro_data = {'sentiment': 'Neutral', 'confidence': 0.5}
+                    # self.btc_dominance mantém valor anterior
+                except Exception as e:
+                    print(f"[ERROR] Erro em dados externos: {e}")
+                    macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
+                    miro_data = {'sentiment': 'Neutral', 'confidence': 0.5}
                 
                 m_sent = miro_data['sentiment']; m_conf = miro_data['confidence']
                 news_sent = m_conf if m_sent == "Bullish" else (-m_conf if m_sent == "Bearish" else 0)
