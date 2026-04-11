@@ -40,10 +40,16 @@ load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
 import logging
 
-def _cpu_heavy_predict(brain, df):
+def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0):
     try:
-        curr_feat = df[[c for c in df.columns if c.startswith('feat_')]].values[-1]
+        df['macro_risk'] = macro_risk
+        df['btc_dominance'] = btc_dom
+        df = brain.prepare_features(df)
+        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0
+        
         current_price = float(df['close'].values[-1])
+        curr_feat = df[brain.feature_cols].values[-1]
+        
         signal, prob, reason = brain.predict_signal(curr_feat)
         return signal, prob, reason, current_price
     except Exception as e:
@@ -439,7 +445,14 @@ class MulticoreMasterBot:
                         if df.empty: return
                         df = self.engine.apply_indicators(df)
                         brain = self.brains[asset]
-                        sig, prob, reason, price = await loop.run_in_executor(self.process_executor, _cpu_heavy_predict, brain, df)
+                        sig, prob, reason, price = await loop.run_in_executor(
+                            self.process_executor, 
+                            _cpu_heavy_predict, 
+                            brain, 
+                            df,
+                            self.macro_risk,
+                            self.btc_dominance
+                        )
                         
                         f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
                         t_sigs = {'live':{'sig':sig,'prob':prob}, 'shadow':{'sig':0,'prob':0.5}, 'ancestral':{'sig':0,'prob':0.5}}
