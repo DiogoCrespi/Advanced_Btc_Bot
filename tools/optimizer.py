@@ -51,6 +51,8 @@ class StrategyOptimizer:
 
         # Pre-extract arrays for faster lookup in loops
         close_arr = df['close'].values
+        if use_ml:
+            feature_arr = df[feature_cols].values
         if not use_ml:
             has_avwap = use_avwap and 'AVWAP' in df.columns
             if has_avwap:
@@ -77,7 +79,7 @@ class StrategyOptimizer:
             if position == 0:
                 if use_ml:
                     # ML Mode uses predicted class
-                    feat_vec = df[feature_cols].iloc[i].values
+                    feat_vec = feature_arr[i]
                     signal, prob, reason = self.ml_brain.predict_signal(feat_vec, feature_cols)
                     if signal == 1:
                         position = 1

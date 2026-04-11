@@ -39,13 +39,15 @@ def analyze_frequency(asset="BTC-USD", years=1):
     print(f"{'Confianca':<12} | {'Sinais':<10} | {'Trades/Mes':<12} | {'Espera Media':<15}")
     print("-" * 60)
     
+    # Pre-extract numpy arrays for fast lookups in loops (~100x speedup)
+    feat_arr = processed[f_cols].values
     for thr in thresholds:
         signals = 0
         last_signal_idx = 0
         wait_times = []
         
         for i in range(len(processed)):
-            feat_vec = processed[f_cols].iloc[i].values
+            feat_vec = feat_arr[i]
             sig, prob, reason = brain.predict_signal(feat_vec, f_cols)
             
             if sig != 0 and prob >= thr:
