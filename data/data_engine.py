@@ -88,33 +88,13 @@ class DataEngine:
         gold_change = 0.0
         
         try:
-            # Fetch with Ticker.history for better robustness in single symbol downloads
-            sp500_df = yf.Ticker("^GSPC").history(period=period, interval="1d")
-            dxy_df = yf.Ticker("DX-Y.NYB").history(period=period, interval="1d")
-            gold_df = yf.Ticker("GC=F").history(period=period, interval="1d")
-            
-            # 1. Process S&P 500
-            if sp500_df is not None and not sp500_df.empty and len(sp500_df) >= 2:
-                # history() handles MultiIndex differently, usually single symbol is standard columns
-                close_col = 'Close' if 'Close' in sp500_df.columns else None
-                if close_col:
-                    sp500_change = float((sp500_df[close_col].values[-1] / sp500_df[close_col].values[-2]) - 1)
-            
-            # 2. Process DXY
-            if dxy_df is not None and not dxy_df.empty and len(dxy_df) >= 2:
-                close_col = 'Close' if 'Close' in dxy_df.columns else None
-                if close_col:
-                    dxy_change = float((dxy_df[close_col].values[-1] / dxy_df[close_col].values[-2]) - 1)
-            
-            # 3. Process Gold (GC=F)
-            if gold_df is not None and not gold_df.empty and len(gold_df) >= 2:
-                close_col = 'Close' if 'Close' in gold_df.columns else None
-                if close_col:
-                    gold_change = float((gold_df[close_col].values[-1] / gold_df[close_col].values[-2]) - 1)
-
+            # Temporarily disabled yfinance to prevent hangs on some remote environments
+            # sp500_df = yf.Ticker("^GSPC").history(period=period, interval="1d")
+            # dxy_df = yf.Ticker("DX-Y.NYB").history(period=period, interval="1d")
+            # gold_df = yf.Ticker("GC=F").history(period=period, interval="1d")
+            pass
         except Exception as e:
-            # Captura JSONDecodeError, Indexing errors, etc. sem travar o bot
-            print(f"[DATA] Aviso Macro Data: Falha limitada no download (^GSPC/DXY/GC=F): {e}")
+            print(f"[DATA] Aviso Macro Data: {e}")
 
         return {
             "sp500_change": float(sp500_change),
