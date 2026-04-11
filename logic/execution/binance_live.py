@@ -1,7 +1,7 @@
 import os
 import sys
 from typing import Any, Dict, Optional
-from binance.client import AsyncClient
+from binance import AsyncClient
 from binance.exceptions import BinanceAPIException
 from .base import BaseExchange
 

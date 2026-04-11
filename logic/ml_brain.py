@@ -110,7 +110,7 @@ class MLBrain:
         y = y_all[:min_len]
         
         if len(np.unique(y)) < 2:
-            print("⚠ Insufficient label diversity to train ML Brain.")
+            print("Insufficient label diversity to train ML Brain.")
             return False
 
         if train_full:
@@ -118,7 +118,7 @@ class MLBrain:
             X_aligned = X[:len(y)]
             y_aligned = y[:len(X_aligned)]
             self.model.fit(X_aligned, y_aligned) 
-            print(f"🧠 ML Brain Trained! (Full: {len(X_aligned)} samples)")
+            print(f"ML Brain Trained! (Full: {len(X_aligned)} samples)")
             self.is_trained = True
             return 1.0
         else:
@@ -204,5 +204,5 @@ class MLBrain:
             print(f"[LOAD] Cerebro restaurado com sucesso de: {path} ({len(self.feature_cols)} features)")
             return True
         except Exception as e:
-            print(f"⚠ Erro ao carregar cérebro: {e}")
+            print(f"Erro ao carregar cerebro: {e}")
             return False

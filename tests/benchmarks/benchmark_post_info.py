@@ -66,7 +66,7 @@ if __name__ == '__main__':
     create_mock_db("test_bench.db")
 
     # import functions from MiroFish.backend.scripts.run_parallel_simulation
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'MiroFish/backend/scripts')))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../MiroFish/backend/scripts')))
     from run_parallel_simulation import fetch_new_actions_from_db
 
     agent_names = {i: f"Agent_{i}" for i in range(100)}

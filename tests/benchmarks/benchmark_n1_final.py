@@ -15,7 +15,7 @@ sys.modules['oasis'] = MagicMock()
 # Mock action logger dependencies
 sys.modules['action_logger'] = MagicMock()
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'MiroFish/backend')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../MiroFish/backend')))
 from scripts.run_parallel_simulation import fetch_new_actions_from_db
 
 def create_mock_db(db_path, num_actions=1000):

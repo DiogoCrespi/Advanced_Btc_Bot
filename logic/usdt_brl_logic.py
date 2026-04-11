@@ -115,10 +115,12 @@ class UsdtBrlLogic:
         if signal == 0:
             signal, confidence, reason = self._evaluate_sell_signal(macro_risk, rsi, bb_pct)
 
+        metrics = {'rsi': rsi, 'bb_pct': bb_pct, 'slope': slope}
+
         if signal == 0:
-            return 0, 0.0, "USDT Neutro"
+            return 0, 0.0, "USDT Neutro", metrics
 
         # Clamp na confianca
         confidence = float(np.clip(confidence, 0.0, 0.95))
 
-        return signal, confidence, reason
+        return signal, confidence, reason, metrics

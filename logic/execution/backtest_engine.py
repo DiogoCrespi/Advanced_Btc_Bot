@@ -25,7 +25,7 @@ class BacktestEngine(BaseExchange):
         self.trade_history: List[Dict[str, Any]] = []
 
         self.lock = threading.Lock()
-        print("🎮 Backtest Engine Initialized. Mode: SIMULATION")
+        print("Backtest Engine Initialized. Mode: SIMULATION")
 
     def load_data(self, df: pd.DataFrame) -> None:
         """

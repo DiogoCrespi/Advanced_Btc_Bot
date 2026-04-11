@@ -16,3 +16,4 @@ data/*
 outputs/
 .ipynb_checkpoints
 .venv_new/
+.gitnexus

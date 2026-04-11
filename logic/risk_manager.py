@@ -38,9 +38,9 @@ class RiskManager:
         
         # Risk specific arguments
         parser.add_argument("--stop-loss", type=float, default=None,
-                            help="Percentage to trigger an immediate sell (e.g., 0.02 for 2%)")
+                            help="Percentage to trigger an immediate sell (e.g., 0.02 for 2%%)")
         parser.add_argument("--take-profit", type=float, default=None,
-                            help="Target percentage to lock in gains (e.g., 0.03 for 3%)")
+                            help="Target percentage to lock in gains (e.g., 0.03 for 3%%)")
         parser.add_argument("--trailing-stop", type=float, default=None,
                             help="Dynamic stop-loss percentage that follows price action upwards")
         parser.add_argument("--max-drawdown", type=float, default=None,

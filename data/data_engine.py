@@ -20,7 +20,7 @@ class DataEngine:
         """
         Busca klines historicos de um contrato de entrega.
         """
-        # print(f"Fetching Delivery klines for {symbol}...")
+        print(f"Fetching Delivery klines for {symbol}...")
         try:
             url = f"{self.dapi_url}/klines"
             params = {"symbol": symbol, "interval": interval, "limit": limit}
@@ -45,7 +45,7 @@ class DataEngine:
         Fetches Macro indicators: S&P 500 (^GSPC), DXY (DX-Y.NYB) and Gold (GC=F).
         Returns a dictionary with the % change of each.
         """
-        # print("Fetching Macro Data (S&P 500 & DXY)...")
+        print("Fetching Macro Data (S&P 500 & DXY)...")
         sp500_change = 0.0
         dxy_change = 0.0
         gold_change = 0.0
@@ -245,7 +245,7 @@ class DataEngine:
 
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": symbol, "interval": interval, "limit": limit}
-        # print(f"Fetching Binance Klines for {symbol}...")
+        print(f"Fetching Binance Klines for {symbol}...")
         
         try:
             response = requests.get(url, params=params, timeout=10)

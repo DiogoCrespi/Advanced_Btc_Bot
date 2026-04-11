@@ -16,8 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from threading import Lock, Thread
 from collections import deque
 from dotenv import load_dotenv
-from binance.client import AsyncClient
-from binance import BinanceSocketManager
+from binance import AsyncClient, BinanceSocketManager
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 
@@ -58,6 +57,9 @@ class WebSocketSupervisor:
         self._backoff_delay = 1
 
     async def start(self):
+        if self.bot.mode == "backtest":
+            self.logger.info("Supervisor disabled (Backtest Mode)")
+            return
         while self._is_running:
             try:
                 await self._run_socket_session()
@@ -161,6 +163,7 @@ class MulticoreMasterBot:
         self.balance = self.load_balance()
         self.positions = self.load_state()
         self.total_equity = self.balance
+        self.dashboard_logs = deque(maxlen=5)
         
         print("[INIT] Booting Multicore Brains...")
         os.makedirs("models", exist_ok=True)
@@ -220,9 +223,89 @@ class MulticoreMasterBot:
         self.log_queue.put(("save_state", (self.status_file, st)))
 
     def notify_ntfy(self, msg, title="BTC BOT"):
+        # Log para o dashboard
+        self.dashboard_logs.appendleft(msg)
         try:
             requests.post(f"{self.ntfy_url}/{self.ntfy_topic}", data=msg.encode('utf-8'), headers={"Title": title}, timeout=5)
         except Exception: pass
+
+    def _render_dashboard(self, ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res):
+        """Builds the stylized console UI as requested by the user."""
+        header = f"+{'-'*80}+\n"
+        header += f"| >>> ADVANCED MULTICORE BTC BOT | {ts} | Equity: R$ {self.total_equity:,.2f} |\n"
+        header += f"| Saldo Disponivel: R$ {self.balance:,.2f} | USDT: {self.usdt_balance:.2f} |\n"
+        
+        m_mult, m_msg = self.agent.radar.get_recommended_position_mult()
+        header += f"| Macro Risk Score: {self.macro_risk:.2f} | Recommendation: {m_msg} |\n"
+        header += f"+{'-'*80}+\n"
+        
+        # Portfolio
+        port_lines = []
+        for asset, pos_list in self.positions.items():
+            for p in pos_list:
+                pnl = (asset_signals.get(asset,{}).get('price', p['entry']) / p['entry'] - 1) * p['signal']
+                port_lines.append(f"| {asset} ({p['signal']}): @ {p['entry']:,.2f} | PnL: {pnl:+.2%} |")
+        
+        portfolio = f"| [PORTFOLIO] Ativos em Carteira ({len(port_lines)}): |\n"
+        portfolio += f"+{'-'*80}+\n"
+        for pl in port_lines: portfolio += pl + "\n"
+        if not port_lines: portfolio += "| Nenhuma posicao aberta no momento. |\n"
+        portfolio += f"+{'-'*80}+\n"
+        
+        # Yields
+        yield_s = ""
+        if yield_info:
+            yield_s = f"| [COFRE BRL] Melhor Yield BTC Futuros: {yield_info['yield_apr']:.2%} a.a. |\n"
+        else:
+            yield_s = "| [COFRE BRL] Buscando contratos de entrega... |\n"
+        yield_s += f"+{'-'*72}+\n"
+        
+        # USDT
+        usdt_s = f"| [USDT/BRL] Preco: {usdt_data['price']:,.2f} | RSI: {usdt_data['rsi']:.1f} | Saldo: {self.usdt_balance:,.2f} USDT |\n"
+        usdt_s += f"+{'-'*72}+\n"
+        
+        # Alpha Signals
+        alpha = f"| [ALPHA ML ] Sinais baseados em Order Flow & ML: |\n"
+        for asset, sig in asset_signals.items():
+            label = "Neutro"
+            if sig['signal'] == 1: label = "COMPRA"
+            elif sig['signal'] == -1: label = "VENDA"
+            
+            conv_label = "Conviccao Baixa"
+            if sig['prob'] > 0.70: conv_label = "Confluencia ML"
+            if sig['prob'] > 0.85: conv_label = "ALTA CONVICCAO"
+            
+            alpha += f"| {asset:8} : {sig['signal']:>2} | Prob: {sig['prob']:>5.1%} | {conv_label} ({sig['prob']:.1%}) |\n"
+        
+        alpha += f"| [STRATEGIST] Decisao: {agent_res['decision']:8} | Mult: {agent_res['allocation_mult']:.2f} |\n"
+        alpha += f"+{'-'*80}+\n"
+        
+        # XAUT
+        xaut_s = f"| [XAUT/BTC] Ratio: {xaut_data['ratio']:.6f} BTC/XAUT | RSI ratio: {xaut_data['rsi']:.1f} | BB%: {xaut_data['bb_pct']:.2f} |\n"
+        xaut_s += f"| Pool BTC: {xaut_data['pool']:.5f} BTC livre | Posicoes: {xaut_data['open_count']}/3 | PnL latente: {xaut_data['pnl']:+.6f} BTC |\n"
+        xaut_s += f"| . Sinal: {xaut_data['reason']:20} | Conf: {xaut_data['conf']:>3.0%} | Thresh: 55% |\n"
+        xaut_s += f"+{'-'*72}+\n"
+        
+        # Logs
+        logs = f"| # LOG RECENTE: |\n"
+        for l in self.dashboard_logs:
+            logs += f"| > {l:<70} |\n"
+        if not self.dashboard_logs: logs += "| > Nenhum log recente. |\n"
+        logs += f"+{'-'*72}+\n"
+        
+        # MiroFish
+        miro_sent = miro_data.get('sentiment', 'Neutral')
+        miro_conf = miro_data.get('confidence', 0.5)
+        miro_score = miro_conf if miro_sent == "Bullish" else (-miro_conf if miro_sent == "Bearish" else 0)
+        
+        miro = f"[MIROFISH] Analise de Sentimento Profundo: {miro_sent} ({miro_conf:.0%}) | Score: {miro_score:.2f}\n"
+        
+        # Composite
+        full = header + portfolio + yield_s + usdt_s + alpha + xaut_s + logs + miro
+        try:
+            print(full)
+        except UnicodeEncodeError:
+            print(full.encode('ascii', 'ignore').decode('ascii'))
 
     async def get_real_balance_async(self, a):
         try: return await self.exchange.get_balance(a)
@@ -243,12 +326,11 @@ class MulticoreMasterBot:
         except Exception: pass
         return round(qty, 5)
 
-    def _process_usdt(self, ts):
-        lines = []
+    def _process_usdt(self, macro_risk):
         df = self.engine.fetch_usdt_brl_data(limit=100)
-        if df.empty: return ["| [USDT] Sem dados |"]
+        if df.empty: return {"price": 0, "rsi": 50, "balance": self.usdt_balance}
         price = float(df['close'].values[-1])
-        sig, conf, reason = self.usdt_logic.get_signal(df, self.macro_risk)
+        sig, conf, reason, metrics = self.usdt_logic.get_signal(df, macro_risk)
         dec, areason = self.agent.assess_usdt_opportunity(sig, conf, reason)
         if dec == "APPROVE":
             if sig == 1 and self.balance >= 100:
@@ -259,23 +341,36 @@ class MulticoreMasterBot:
                 self.balance += self.usdt_balance * price * 0.999
                 self.usdt_balance = 0
                 self.save_balance(); self.save_state()
-        lines.append(f"| [USDT/BRL] Preco: {price:.2f} | Saldo: {self.usdt_balance:.2f} USDT |")
-        return lines
+        return {"price": price, "rsi": metrics.get('rsi', 50), "balance": self.usdt_balance}
 
-    def _process_xaut(self, ts):
-        lines = []
+    def _process_xaut(self):
         df = self.engine.fetch_xaut_ratio(limit=100)
-        if df.empty: return ["| [XAUT] Sem dados |"]
+        if df.empty: return {"ratio": 0, "rsi": 50, "bb_pct": 0.5, "pool": 0, "open_count": 0, "pnl": 0, "reason": "No data", "conf": 0}
         ratio = float(df['close'].values[-1])
+        sig, conf, reason, metrics = self.xaut_analyzer.get_signal(df)
+        
+        # PnL Latente
+        latent_pnl = 0
         with self.xaut_lock:
             rem = []
             for p in self.xaut_positions:
-                pnl = (ratio / p['ratio_entry'] - 1)
-                if pnl > 0.04 or pnl < -0.02: self.async_log(self.xaut_log, f"FECHADO XAUT: {pnl:.2%}")
+                p_pnl = (ratio / p['ratio_entry'] - 1)
+                latent_pnl += (p['xaut_qty'] * ratio) - p['cost_btc']
+                if p_pnl > 0.04 or p_pnl < -0.02: 
+                    self.notify_ntfy(f"FECHADO XAUT: {p_pnl:+.2%}", title="XAUT EXIT")
                 else: rem.append(p)
             self.xaut_positions = rem
-        lines.append(f"| [XAUT/BTC] Ratio: {ratio:.6f} | Pos: {len(self.xaut_positions)} |")
-        return lines
+        
+        return {
+            "ratio": ratio, 
+            "rsi": metrics.get('rsi', 50), 
+            "bb_pct": metrics.get('bb_pct', 0.5),
+            "pool": 0.0, # Placeholder for BTC pool
+            "open_count": len(self.xaut_positions),
+            "pnl": latent_pnl,
+            "reason": reason,
+            "conf": conf
+        }
 
     def _calculate_regime_metrics(self, df):
         if len(df) < 24: return {"vol": 0, "trend": 0}
@@ -381,10 +476,43 @@ class MulticoreMasterBot:
                                 self.positions[asset].append({"entry": s['price'], "signal": s['signal'], "qty": sizing/s['price'], "cost": sizing, "time": ts})
                                 self.notify_ntfy(f"ABERTO {asset}: R$ {sizing:.2f}")
 
-                self._process_usdt(ts)
-                self._process_xaut(ts)
+                # Post-Loop Analysis
+                usdt_data = self._process_usdt(self.macro_risk)
+                xaut_data = self._process_xaut()
+                
+                # Fetch Best Yield
+                yield_info = None
+                try:
+                    contracts = self.engine.fetch_delivery_contracts("BTC")
+                    if contracts:
+                        best_c = None
+                        best_apr = -1
+                        for c in contracts:
+                            b_data = self.engine.fetch_basis_data("BTCUSDT", c['symbol'])
+                            if b_data:
+                                expiry = self.basis_logic.parse_expiry(c['symbol'])
+                                apr = self.basis_logic.calculate_annualized_yield(b_data['spot'], b_data['future'], expiry)
+                                if apr > best_apr:
+                                    best_apr = apr
+                                    best_c = {'symbol': c['symbol'], 'yield_apr': apr}
+                        yield_info = best_c
+                except Exception: pass
+
+                # Calculate Total Equity
+                self.total_equity = self.balance + (usdt_data['price'] * usdt_data['balance'])
+                for asset, pos_list in self.positions.items():
+                    for p in pos_list:
+                        p_price = asset_signals.get(asset, {}).get('price', p['entry'])
+                        p_pnl = (p_price / p['entry'] - 1) * p['signal']
+                        self.total_equity += p['cost'] * (1 + p_pnl)
+                
+                # Add XAUT value to equity (converting BTC to BRL)
+                btc_price = asset_signals.get("BTCBRL", {}).get("price", 0.0)
+                for p in self.xaut_positions:
+                    self.total_equity += p['cost_btc'] * btc_price * (xaut_data['ratio'] / p['ratio_entry'] if 'ratio_entry' in p else 1.0)
+
                 self.save_balance(); self.save_state()
-                print(f"| [{ts}] Equity: R$ {self.balance:.2f} | Risk: {self.macro_risk:.2f} |")
+                self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)
                 
             except Exception as e: print(f"Error: {e}")
             await asyncio.sleep(30)

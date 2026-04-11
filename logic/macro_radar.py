@@ -58,11 +58,11 @@ class MacroRadar:
     def get_recommended_position_mult(self):
         """Retorna mult de posicao baseado no score macro."""
         if self.risk_score < 0.35:
-            return 0.4, "⚠ Macro Risk Off: Protecao de Capital"
+            return 0.4, "Macro Risk Off: Protecao de Capital"
         elif self.risk_score > 0.65:
-            return 1.3, "🚀 Macro Risk On: Agressividade Moderada"
+            return 1.3, "Macro Risk On: Agressividade Moderada"
         else:
-            return 1.0, "⚖ Macro Neutro: Mao Padrao"
+            return 1.0, "Macro Neutro: Mao Padrao"
 
 if __name__ == "__main__":
     radar = MacroRadar()
