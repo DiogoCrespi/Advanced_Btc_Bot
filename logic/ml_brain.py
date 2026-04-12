@@ -49,46 +49,56 @@ class MLBrain:
     def create_labels(self, df, tp=0.015, sl=0.008, horizon=24):
         """
         Creates labels using Triple Barrier Method.
+        Optimized with NumPy vectorization.
         """
-        labels = []
+        from numpy.lib.stride_tricks import sliding_window_view
+
         highs = df['high'].values
         lows = df['low'].values
         closes = df['close'].values
         
-        for i in range(len(closes) - horizon):
-            entry = closes[i]
-            long_outcome = 0
-            short_outcome = 0
-            
-            for j in range(i+1, i+1+horizon):
-                high_ret = (highs[j] / entry) - 1
-                low_ret = (lows[j] / entry) - 1
-                
-                if long_outcome == 0:
-                    hit_tp_long = (high_ret >= tp)
-                    hit_sl_long = (low_ret <= -sl)
-                    if hit_tp_long and hit_sl_long: long_outcome = -1
-                    elif hit_sl_long: long_outcome = -1
-                    elif hit_tp_long: long_outcome = 1
-                
-                if short_outcome == 0:
-                    hit_tp_short = (low_ret <= -tp)
-                    hit_sl_short = (high_ret >= sl)
-                    if hit_tp_short and hit_sl_short: short_outcome = -1
-                    elif hit_sl_short: short_outcome = -1
-                    elif hit_tp_short: short_outcome = 1
+        n = len(closes)
+        valid_n = n - horizon
 
-                if long_outcome != 0 and short_outcome != 0:
-                    break
+        if valid_n <= 0:
+            return np.array([])
             
-            if long_outcome == 1 and short_outcome != 1:
-                labels.append(1)
-            elif short_outcome == 1 and long_outcome != 1:
-                labels.append(-1)
-            else:
-                labels.append(0)
-                
-        return np.array(labels)
+        entries = closes[:valid_n, None]
+
+        h_views = sliding_window_view(highs[1:], window_shape=horizon)[:valid_n]
+        l_views = sliding_window_view(lows[1:], window_shape=horizon)[:valid_n]
+
+        hit_tp_long = h_views >= entries * (1 + tp)
+        hit_sl_long = l_views <= entries * (1 - sl)
+
+        hit_tp_short = l_views <= entries * (1 - tp)
+        hit_sl_short = h_views >= entries * (1 + sl)
+
+        def get_first_hit(cond):
+            first_idx = np.argmax(cond, axis=1)
+            first_idx[~cond.any(axis=1)] = horizon
+            return first_idx
+            
+        f_tp_l = get_first_hit(hit_tp_long)
+        f_sl_l = get_first_hit(hit_sl_long)
+        f_tp_s = get_first_hit(hit_tp_short)
+        f_sl_s = get_first_hit(hit_sl_short)
+
+        long_outcomes = np.zeros(valid_n, dtype=int)
+        l_active = (f_sl_l < horizon) | (f_tp_l < horizon)
+        long_outcomes[l_active & (f_sl_l <= f_tp_l)] = -1
+        long_outcomes[l_active & (f_tp_l < f_sl_l)] = 1
+
+        short_outcomes = np.zeros(valid_n, dtype=int)
+        s_active = (f_sl_s < horizon) | (f_tp_s < horizon)
+        short_outcomes[s_active & (f_sl_s <= f_tp_s)] = -1
+        short_outcomes[s_active & (f_tp_s < f_sl_s)] = 1
+
+        labels = np.zeros(valid_n, dtype=int)
+        labels[(long_outcomes == 1) & (short_outcomes != 1)] = 1
+        labels[(short_outcomes == 1) & (long_outcomes != 1)] = -1
+
+        return labels
 
     def train(self, df, train_full=False, tp=None, sl=None, horizon=None):
         """
