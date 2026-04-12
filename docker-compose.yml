@@ -31,6 +31,8 @@ services:
         condition: service_started
       neo4j:
         condition: service_started
+    env_file:
+      - .env
     environment:
       - MIROFISH_API_URL=http://mirofish-backend:8000/api
       - BINANCE_API_KEY=${BINANCE_API_KEY}

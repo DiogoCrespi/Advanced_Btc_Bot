@@ -4,6 +4,7 @@ import logging
 import os
 import requests
 import time
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -19,10 +20,23 @@ class LocalOracle:
     def __init__(self, memory_module, shared_state: dict):
         self.memory = memory_module
         self.state = shared_state
-        self.llm_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-        self.model_name = os.getenv("OLLAMA_MODEL", "gemma2") # default model name
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.executor = ThreadPoolExecutor(max_workers=3) # Uma thead pra cada persona
         self._is_running = True
+        self.key_lock = threading.Lock()
+        
+        # Carrega pool de APIs gratuitas anti-429
+        self.api_keys = []
+        groq = os.getenv("GROQ_API_KEY")
+        if groq: self.api_keys.append({"provider": "groq", "key": groq, "model": "llama3-70b-8192"})
+        
+        for i in range(1, 6):
+            gemini = os.getenv(f"GEMINI_KEY_{i}")
+            if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-3.1-flash-lite"}) # Deve ficar fixo em 3.1 Flash Lite por exigencia da integracao do Google
+            
+        if not self.api_keys:
+            self.api_keys.append({"provider": "ollama", "key": "none", "model": "gemma2"})
+            
+        self.current_key_idx = 0
 
     async def start_loop(self):
         """Loop infinito assincrono (Background)."""
@@ -36,8 +50,8 @@ class LocalOracle:
             except Exception as e:
                 logger.error(f"[ORACLE] Erro no fluxo do comite: {e}")
             
-            # Aguarda 60 segundos antes da proxima avaliacao do comite de especialistas
-            await asyncio.sleep(60)
+            # Aguarda 15 minutos (900 segundos) para evitar bloqueios de 429 nas APIs gratuitas
+            await asyncio.sleep(900)
 
     async def _evaluate_comite(self):
         loop = asyncio.get_running_loop()
@@ -112,21 +126,66 @@ class LocalOracle:
         self.state["last_oracle_update"] = datetime.now().strftime('%H:%M:%S')
 
     def _query_llm(self, prompt: str) -> str:
-        """Chamada bloqueante isolada por executor thread."""
-        try:
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False
-            }
-            res = requests.post(self.llm_url, json=payload, timeout=40)
-            if res.status_code == 200:
-                data = res.json()
-                return data.get("response", "")
-            return ""
-        except Exception as e:
-            logger.debug(f"[ORACLE] Timeout ou erro LLM local: {e}")
-            return ""
+        """Chamada bloqueante isolada por executor thread com Failover e Rotacao."""
+        max_attempts = len(self.api_keys) * 2 if self.api_keys else 1
+        attempts = 0
+        
+        while attempts < max_attempts:
+            with self.key_lock:
+                provider_info = self.api_keys[self.current_key_idx]
+            
+            provider = provider_info["provider"]
+            api_key = provider_info["key"]
+            model = provider_info["model"]
+            
+            try:
+                if provider == "groq":
+                    url = "https://api.groq.com/openai/v1/chat/completions"
+                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                    payload = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+                    res = requests.post(url, headers=headers, json=payload, timeout=30)
+                    
+                    if res.status_code == 200:
+                        return res.json().get('choices', [{}])[0].get('message', {}).get('content', '')
+                    elif res.status_code == 429:
+                        logger.warning(f"[ORACLE] Groq Rate Limit (429). Trocando chave...")
+                    else:
+                        logger.warning(f"[ORACLE] Erro Groq: {res.status_code} - {res.text[:100]}")
+
+                elif provider == "gemini":
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                    headers = {"Content-Type": "application/json"}
+                    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                    res = requests.post(url, headers=headers, json=payload, timeout=30)
+                    
+                    if res.status_code == 200:
+                        candidates = res.json().get('candidates', [])
+                        if candidates and 'content' in candidates[0]:
+                            return candidates[0]['content'].get('parts', [{}])[0].get('text', '')
+                        return ""
+                    elif res.status_code == 429:
+                        logger.warning(f"[ORACLE] Gemini Rate Limit (429). Trocando chave...")
+                    else:
+                        logger.warning(f"[ORACLE] Erro Gemini: {res.status_code} - {res.text[:100]}")
+                
+                else:
+                    url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+                    payload = {"model": model, "prompt": prompt, "stream": False}
+                    res = requests.post(url, json=payload, timeout=40)
+                    if res.status_code == 200:
+                        return res.json().get("response", "")
+
+            except Exception as e:
+                logger.debug(f"[ORACLE] Erro de conexao API: {e}")
+            
+            # Se falhou, rotaciona a chave de forma sincronizada
+            with self.key_lock:
+                self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
+            attempts += 1
+            time.sleep(1)
+
+        logger.error("[ORACLE] Todas as chaves falharam (limite ou erro).")
+        return ""
 
     def _extract_score(self, text: str) -> float:
         """Isola a definicao numerica gerada pelo LLM ('SCORE: 0.8')."""

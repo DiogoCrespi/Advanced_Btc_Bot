@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Btc_bot** (1749 symbols, 8733 relationships, 147 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Advanced_Btc_Bot** (1733 symbols, 8608 relationships, 145 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -17,7 +17,7 @@ This project is indexed by GitNexus as **Btc_bot** (1749 symbols, 8733 relations
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/Btc_bot/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/Advanced_Btc_Bot/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -56,10 +56,10 @@ This project is indexed by GitNexus as **Btc_bot** (1749 symbols, 8733 relations
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/Btc_bot/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/Btc_bot/clusters` | All functional areas |
-| `gitnexus://repo/Btc_bot/processes` | All execution flows |
-| `gitnexus://repo/Btc_bot/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/Advanced_Btc_Bot/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/Advanced_Btc_Bot/clusters` | All functional areas |
+| `gitnexus://repo/Advanced_Btc_Bot/processes` | All execution flows |
+| `gitnexus://repo/Advanced_Btc_Bot/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
