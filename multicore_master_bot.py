@@ -29,7 +29,7 @@ from logic.xaut_logic import XAUTAnalyzer
 from logic.market_memory import MarketMemory
 from logic.strategist_agent import StrategistAgent
 from logic.usdt_brl_logic import UsdtBrlLogic
-from logic.mirofish_client import MiroFishClient
+from logic.local_oracle import LocalOracle
 from logic.coingecko_client import CoinGeckoClient
 from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.tribunal import ConsensusTribunal
@@ -165,9 +165,9 @@ class MulticoreMasterBot:
         self.usdt_logic = UsdtBrlLogic()
         self.brains = {asset: MLBrain() for asset in assets}
         self.agent = StrategistAgent()
-        self.miro_client = MiroFishClient()
-        self.miro_sim_id = "live_bot_sim"
         self.memory = MarketMemory()
+        self.oracle_state = {"sentiment": "Neutral", "confidence": 0.5, "multiplier": 1.0, "macro_risk": 0.5}
+        self.oracle = LocalOracle(self.memory, self.oracle_state)
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
         self.risk_manager = RiskManager()
@@ -328,12 +328,12 @@ class MulticoreMasterBot:
         if not self.dashboard_logs: logs += "| > Nenhum log recente. |\n"
         logs += f"+{'-'*72}+\n"
         
-        # MiroFish
+        # Oracle Local
         miro_sent = miro_data.get('sentiment', 'Neutral')
         miro_conf = miro_data.get('confidence', 0.5)
         miro_score = miro_conf if miro_sent == "Bullish" else (-miro_conf if miro_sent == "Bearish" else 0)
         
-        miro = f"[MIROFISH] Analise de Sentimento Profundo: {miro_sent} ({miro_conf:.0%}) | Score: {miro_score:.2f}\n"
+        miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f}\n"
         
         # Composite
         full = header + portfolio + yield_s + usdt_s + alpha + xaut_s + logs + miro
@@ -439,23 +439,24 @@ class MulticoreMasterBot:
                 loop = asyncio.get_running_loop()
                 # Fetch Macro, Sentiment and BTC Dominance with Timeouts
                 try:
+                    self.oracle_state["macro_risk"] = self.macro_risk
                     macro_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
-                    miro_task = loop.run_in_executor(self.executor, self.miro_client.get_sentiment_summary, self.miro_sim_id)
                     btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
                     
-                    macro_data, miro_data, self.btc_dominance = await asyncio.wait_for(
-                        asyncio.gather(macro_task, miro_task, btc_dom_task),
+                    macro_data, self.btc_dominance = await asyncio.wait_for(
+                        asyncio.gather(macro_task, btc_dom_task),
                         timeout=20.0
                     )
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 except asyncio.TimeoutError:
                     print("[WARN] Timeout buscando dados externos. Usando fallbacks...")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    miro_data = {'sentiment': 'Neutral', 'confidence': 0.5}
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                     # self.btc_dominance mantém valor anterior
                 except Exception as e:
                     print(f"[ERROR] Erro em dados externos: {e}")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    miro_data = {'sentiment': 'Neutral', 'confidence': 0.5}
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 
                 m_sent = miro_data['sentiment']; m_conf = miro_data['confidence']
                 news_sent = m_conf if m_sent == "Bullish" else (-m_conf if m_sent == "Bearish" else 0)
@@ -603,6 +604,7 @@ async def main(bot):
     supervisor = WebSocketSupervisor(bot)
     asyncio.create_task(supervisor.start())
     asyncio.create_task(bot._train_initial_evo_pop())
+    asyncio.create_task(bot.oracle.start_loop())
     await bot.run_async()
 
 if __name__ == "__main__":
