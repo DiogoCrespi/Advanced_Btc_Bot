@@ -34,7 +34,7 @@ class LocalOracle:
             if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-1.5-flash"}) # Deve ficar fixo em 1.5 Flash por estabilidade
             
         if not self.api_keys:
-            self.api_keys.append({"provider": "ollama", "key": "none", "model": "gemma2"})
+            self.api_keys.append({"provider": "ollama", "key": "none", "model": "phi3:mini"})
             
         self.current_key_idx = 0
 
@@ -169,7 +169,7 @@ class LocalOracle:
                         logger.warning(f"[ORACLE] Erro Gemini: {res.status_code} - {res.text[:100]}")
                 
                 else:
-                    url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+                    url = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
                     payload = {"model": model, "prompt": prompt, "stream": False}
                     res = requests.post(url, json=payload, timeout=40)
                     if res.status_code == 200:
