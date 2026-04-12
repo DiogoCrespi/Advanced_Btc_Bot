@@ -27,11 +27,11 @@ class LocalOracle:
         # Carrega pool de APIs gratuitas anti-429
         self.api_keys = []
         groq = os.getenv("GROQ_API_KEY")
-        if groq: self.api_keys.append({"provider": "groq", "key": groq, "model": "llama3-70b-8192"})
+        if groq: self.api_keys.append({"provider": "groq", "key": groq, "model": "llama-3.3-71b-versatile"})
         
         for i in range(1, 6):
             gemini = os.getenv(f"GEMINI_KEY_{i}")
-            if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-3.1-flash-lite"}) # Deve ficar fixo em 3.1 Flash Lite por exigencia da integracao do Google
+            if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-1.5-flash"}) # Deve ficar fixo em 1.5 Flash por estabilidade
             
         if not self.api_keys:
             self.api_keys.append({"provider": "ollama", "key": "none", "model": "gemma2"})
