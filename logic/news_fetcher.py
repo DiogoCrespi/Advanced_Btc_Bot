@@ -22,6 +22,7 @@ import os
 import logging
 import time
 import asyncio
+import re
 from typing import List, Dict, Any
 
 import aiohttp
@@ -41,6 +42,24 @@ TAVILY_BASE  = "https://api.tavily.com/search"
 DEFAULT_QUERY   = "Bitcoin BTC crypto market"
 DEFAULT_TIMEOUT = 10          # seconds per HTTP request
 CACHE_TTL       = 300         # seconds – don't hammer the APIs (5 min)
+
+# ─── Sentiment Keywords ───────────────────────────────────────────────────────
+BULLISH_KEYWORDS = {
+    "rally", "surge", "soar", "bull", "breakout", "all-time high", "ath",
+    "recover", "adoption", "etf", "approval", "gain", "pump"
+}
+BEARISH_KEYWORDS = {
+    "crash", "dump", "bear", "drop", "hack", "ban", "lawsuit", "sec",
+    "collapse", "fear", "liquidation", "fall", "crisis", "recession"
+}
+
+# Weight mapping for pre-compiled regex matching
+_KEYWORD_WEIGHTS = {w: 1.0 for w in BULLISH_KEYWORDS}
+_KEYWORD_WEIGHTS.update({w: -1.0 for w in BEARISH_KEYWORDS})
+
+# Pre-compile regex for performance, sorted by length descending to match longest phrases first
+_SORTED_KEYWORDS = sorted(_KEYWORD_WEIGHTS.keys(), key=len, reverse=True)
+_SENTIMENT_PATTERN = re.compile('|'.join(map(re.escape, _SORTED_KEYWORDS)))
 
 
 class NewsFetcher:
@@ -141,20 +160,15 @@ class NewsFetcher:
 
     def _calculate_keyword_score(self, arts: List[Dict[str, Any]]) -> float:
         """Helper to calculate keyword-based sentiment score from articles."""
-        BULLISH = {"rally", "surge", "soar", "bull", "breakout", "all-time high", "ath",
-                   "recover", "adoption", "etf", "approval", "gain", "pump"}
-        BEARISH = {"crash", "dump", "bear", "drop", "hack", "ban", "lawsuit", "sec",
-                   "collapse", "fear", "liquidation", "fall", "crisis", "recession"}
-
         score = 0.0
         for a in arts:
-            text = f"{a.get('title','')} {a.get('description','')}".lower()
-            for w in BULLISH:
-                if w in text:
-                    score += 1
-            for w in BEARISH:
-                if w in text:
-                    score -= 1
+            # Faster string building and lowercasing
+            text = f"{a.get('title', '')} {a.get('description', '')}".lower()
+
+            # Use pre-compiled regex to find unique keyword matches in text
+            matches = set(_SENTIMENT_PATTERN.findall(text))
+            for m in matches:
+                score += _KEYWORD_WEIGHTS[m]
 
         return float(max(-1.0, min(1.0, score / max(len(arts), 1))))
 
