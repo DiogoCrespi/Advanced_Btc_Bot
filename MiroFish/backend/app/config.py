@@ -22,7 +22,7 @@ class Config:
     """Flask配置类"""
     
     # Flask配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
+    SECRET_KEY = os.environ.get('SECRET_KEY')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     
     # CORS配置
@@ -77,6 +77,9 @@ class Config:
     def validate(cls):
         """验证必要配置"""
         errors = []
+        # SECRET_KEY para seguranca do Flask
+        if not cls.SECRET_KEY:
+            errors.append("SECRET_KEY 未配置")
         # ZEP_API_KEY ainda eh verificado
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
