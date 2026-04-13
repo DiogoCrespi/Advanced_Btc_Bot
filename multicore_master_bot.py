@@ -182,7 +182,7 @@ class MulticoreMasterBot:
         self.executor = ThreadPoolExecutor(max_workers=6)
         self.process_executor = ProcessPoolExecutor(max_workers=6)
 
-        self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.9, "SOLBRL":0.8, "LINKBRL":0.65, "AVAXBRL":0.65, "RENDERBRL":0.6}
+        self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
         self.balance = self.load_balance()
         self.positions = self.load_state()
         self.total_equity = self.balance
@@ -472,19 +472,33 @@ class MulticoreMasterBot:
                         df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
                         if df.empty: return
                         df = self.engine.apply_indicators(df)
-                        brain = self.brains[asset]
-                        sig, prob, reason, price = await loop.run_in_executor(
-                            self.process_executor, 
-                            _cpu_heavy_predict, 
-                            brain, 
-                            df,
-                            self.macro_risk,
-                            self.btc_dominance,
-                            0.45  # Lowered threshold to 0.45
-                        )
+                        
+                        # Brains candidates
+                        live_brain = self.brains[asset]
+                        shadow_brain = self.shadow_brains[asset]
+                        
+                        # Identify Alfa for Ancestral vote
+                        alfa_dna = self.evo_engine.population[0]
+                        ancestral_brain = self.evo_brains[alfa_dna.id][asset]
+                        
+                        # Parallelize predictions across ProcessPoolExecutor
+                        tasks = [
+                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
+                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, shadow_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
+                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, ancestral_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45)
+                        ]
+                        
+                        results = await asyncio.gather(*tasks)
+                        (sig, prob, reason, price) = results[0]
+                        (s_sig, s_prob, _, _) = results[1]
+                        (a_sig, a_prob, _, _) = results[2]
                         
                         f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
-                        t_sigs = {'live':{'sig':sig,'prob':prob}, 'shadow':{'sig':0,'prob':0.5}, 'ancestral':{'sig':0,'prob':0.5}}
+                        t_sigs = {
+                            'live': {'sig': sig, 'prob': prob},
+                            'shadow': {'sig': s_sig, 'prob': s_prob},
+                            'ancestral': {'sig': a_sig, 'prob': a_prob}
+                        }
                         fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status)
                         
                         acc = self.stats.get('global_acc_4h', 0.5)
@@ -527,7 +541,8 @@ class MulticoreMasterBot:
                     if s['signal'] != 0 and len(self.positions[asset]) < 1:
                         h_pct = self.risk_manager.calculate_bunker_allocation(self.macro_risk)
                         avail = 0.1 if (is_extreme and asset=="BTCBRL") else (0.0 if is_extreme else (1.0 - h_pct))
-                        kelly = self.risk_manager.get_kelly_trade_amount(self.total_equity, 0.5)
+                        # Use internal model probability (s['prob']) for Kelly instead of hardcoded 0.5
+                        kelly = self.risk_manager.get_kelly_trade_amount(self.total_equity, s['prob'])
                         sizing = kelly * s['conviction'] * avail
                         
                         if sizing >= 10 and self.balance >= sizing:
@@ -536,6 +551,15 @@ class MulticoreMasterBot:
                                 self.balance -= sizing
                                 self.positions[asset].append({"entry": s['price'], "signal": s['signal'], "qty": sizing/s['price'], "cost": sizing, "time": ts})
                                 self.notify_telegram(f"ABERTO {asset}: R$ {sizing:.2f}")
+                            else:
+                                print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
+                        else:
+                            if sizing < 10 and sizing > 0:
+                                print(f"[RISK] {asset}: Sizing insuficiente (R$ {sizing:.2f} < 10.00)")
+                            elif self.balance < sizing:
+                                print(f"[RISK] {asset}: Saldo insuficiente (R$ {self.balance:.2f} < {sizing:.2f})")
+                            elif avail == 0:
+                                print(f"[RISK] {asset}: Bloqueado pelo modo Bunker (Extreme Risk)")
 
                 # Post-Loop Analysis
                 usdt_data = self._process_usdt(self.macro_risk)

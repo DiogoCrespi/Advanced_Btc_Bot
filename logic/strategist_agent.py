@@ -109,7 +109,7 @@ class StrategistAgent:
         }
         
         # 1. Filtro de Probabilidade
-        if probability < 0.60:
+        if probability < 0.48:
             return "REJECT", f"Probabilidade insuficiente ({probability:.2f})", modifiers
             
         # 2. Ajuste por Conviccao
