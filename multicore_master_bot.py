@@ -35,6 +35,7 @@ from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.tribunal import ConsensusTribunal
 from logic.risk_manager import RiskManager
 from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
+from logic.watchdog import Watchdog
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
@@ -174,6 +175,11 @@ class MulticoreMasterBot:
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.use_mirofish = os.getenv("USE_MIROFISH", "True").lower() in ("true", "1", "yes")
+        
+        # Health & Monitoring
+        self.last_tick = time.time()
+        self.watchdog = Watchdog(self)
+        self.watchdog.start()
 
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -438,6 +444,7 @@ class MulticoreMasterBot:
         while True:
             try:
                 ts = datetime.now().strftime('%H:%M:%S')
+                self.last_tick = time.time()
                 loop = asyncio.get_running_loop()
                 # Fetch Macro, Sentiment and BTC Dominance with Timeouts
                 try:
