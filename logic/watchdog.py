@@ -20,11 +20,11 @@ class Watchdog(threading.Thread):
         self.name = "HealthWatchdog"
         self._is_running = True
         
-        # Thresholds
-        self.latency_threshold_ms = 500  # 0.5 segundos (Alerta)
-        self.critical_latency_ms = 2000  # 2.0 segundos (Safe Mode)
-        self.ram_threshold_pct = 85.0    # 85% de uso (Safe Mode)
-        self.heartbeat_threshold_sec = 120 # 2 minutos sem tick (Critical)
+        # Thresholds (Otimizados para Relatorio)
+        self.latency_threshold_ms = 1500  # 1.5 segundos (Alerta)
+        self.critical_latency_ms = 5000   # 5.0 segundos (Relatorio Critico)
+        self.ram_threshold_pct = 90.0     # 90% de uso
+        self.heartbeat_threshold_sec = 300 # 5 minutos sem tick
 
         self.last_latency = 0
         self.last_ram = 0
@@ -52,7 +52,7 @@ class Watchdog(threading.Thread):
             except Exception as e:
                 print(f"[WATCHDOG] Erro no loop de monitoramento: {e}")
             
-            time.sleep(30) # Monitoramento a cada 30 segundos
+            time.sleep(600) # Monitoramento a cada 10 minutos (Otimizado)
 
     def stop(self):
         self._is_running = False
@@ -61,10 +61,10 @@ class Watchdog(threading.Thread):
         mem = psutil.virtual_memory()
         self.last_ram = mem.percent
         if self.last_ram > self.ram_threshold_pct:
-            msg = f"❗ ALERTA: Uso de RAM crítico ({self.last_ram}%)! Ativando Safe Mode."
+            msg = f"❗ RELATORIO: Uso de RAM elevado ({self.last_ram}%)."
             print(f"[WATCHDOG] {msg}")
-            self.bot.safe_mode = True
-            self.bot.notify_telegram(msg, title="WATCHDOG CRITICAL")
+            # Remoção da interação com Safe Mode conforme solicitado
+            self.bot.notify_telegram(msg, title="WATCHDOG MEMORY REPORT")
 
     def _check_latency(self):
         # Como o Watchdog roda em Thread, precisamos de um mini-loop async se quisermos usar o AsyncClient.
@@ -76,10 +76,9 @@ class Watchdog(threading.Thread):
             self.last_latency = int((time.time() - start) * 1000)
             
             if self.last_latency > self.critical_latency_ms:
-                self.bot.safe_mode = True
-                self.bot.notify_telegram(f"📉 Latência Crítica: {self.last_latency}ms! Safe Mode ATIVO.", title="WATCHDOG CRITICAL")
+                self.bot.notify_telegram(f"📉 Relatorio: Latência muito alta ({self.last_latency}ms).", title="WATCHDOG LATENCY CRITICAL")
             elif self.last_latency > self.latency_threshold_ms:
-                self.bot.notify_telegram(f"⚠️ Latência Alta: {self.last_latency}ms.", title="WATCHDOG WARNING")
+                self.bot.notify_telegram(f"⚠️ Relatorio: Latência de {self.last_latency}ms.", title="WATCHDOG LATENCY WARNING")
         except Exception as e:
             self.last_latency = 9999
             print(f"[WATCHDOG] Falha ao verificar latência: {e}")
