@@ -618,16 +618,7 @@ class MulticoreMasterBot:
                 # Relatorio Periodico (Heartbeat) - Cada 4 horas
                 if datetime.now() - self.last_status_report > timedelta(hours=4):
                     pos_count = sum(len(p) if isinstance(p, list) else 1 for p in self.positions.values() if p)
-                    status_msg = (
-                        f"🛡️ <b>BOT STATUS REPORT</b>\n"
-                        f"--------------------------------\n"
-                        f"💰 <b>Equity:</b> R$ {self.total_equity:,.2f}\n"
-                        f"💵 <b>Saldo:</b> R$ {self.balance:,.2f}\n"
-                        f"📊 <b>Posições:</b> {pos_count} abertas\n"
-                        f"🕒 <b>Hora:</b> {ts}\n"
-                        f"--------------------------------\n"
-                        f"✅ <i>Bot operando normalmente.</i>"
-                    )
+                    status_msg = f"🛡️ <b>STATUS:</b> Equity R$ {self.total_equity:,.2f} | Saldo R$ {self.balance:,.2f} | Pos: {pos_count} | 🕒 {ts} | ✅ Normal"
                     self.notify_telegram(status_msg, title="STATUS")
                     self.last_status_report = datetime.now()
 
