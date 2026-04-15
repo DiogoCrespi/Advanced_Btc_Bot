@@ -173,6 +173,7 @@ class MulticoreMasterBot:
         self.risk_manager = RiskManager()
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        self.use_mirofish = os.getenv("USE_MIROFISH", "True").lower() in ("true", "1", "yes")
 
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -333,7 +334,8 @@ class MulticoreMasterBot:
         miro_conf = miro_data.get('confidence', 0.5)
         miro_score = miro_conf if miro_sent == "Bullish" else (-miro_conf if miro_sent == "Bearish" else 0)
         
-        miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f}\n"
+        status_oraculo = "ATIVADO" if self.use_mirofish else "DESATIVADO - Calculo Puro"
+        miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f} [{status_oraculo}]\n"
         
         # Composite
         full = header + portfolio + yield_s + usdt_s + alpha + xaut_s + logs + miro
@@ -447,16 +449,25 @@ class MulticoreMasterBot:
                         asyncio.gather(macro_task, btc_dom_task),
                         timeout=20.0
                     )
-                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    if self.use_mirofish:
+                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    else:
+                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
                 except asyncio.TimeoutError:
                     print("[WARN] Timeout buscando dados externos. Usando fallbacks...")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    if self.use_mirofish:
+                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    else:
+                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
                     # self.btc_dominance mantém valor anterior
                 except Exception as e:
                     print(f"[ERROR] Erro em dados externos: {e}")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    if self.use_mirofish:
+                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                    else:
+                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
                 
                 m_sent = miro_data['sentiment']; m_conf = miro_data['confidence']
                 news_sent = m_conf if m_sent == "Bullish" else (-m_conf if m_sent == "Bearish" else 0)
@@ -628,7 +639,8 @@ async def main(bot):
     supervisor = WebSocketSupervisor(bot)
     asyncio.create_task(supervisor.start())
     asyncio.create_task(bot._train_initial_evo_pop())
-    asyncio.create_task(bot.oracle.start_loop())
+    if bot.use_mirofish:
+        asyncio.create_task(bot.oracle.start_loop())
     await bot.run_async()
 
 if __name__ == "__main__":
