@@ -5,21 +5,21 @@ networks:
 
 services:
   # 1. MiroFish Sentiment Engine (Backend)
-  mirofish-backend:
-    build: ./MiroFish
-    container_name: mirofish_engine
-    command: [ "uv", "run", "--project", "backend", "python", "backend/run.py" ]
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - FLASK_PORT=8000
-    env_file:
-      - ./MiroFish/.env
-    networks:
-      - quant_net
-    volumes:
-      - ./MiroFish/backend/uploads:/app/backend/uploads
+#  mirofish-backend:
+#    build: ./MiroFish
+#    container_name: mirofish_engine
+#    command: [ "uv", "run", "--project", "backend", "python", "backend/run.py" ]
+#    restart: unless-stopped
+#    ports:
+#      - "8000:8000"
+#    environment:
+#      - FLASK_PORT=8000
+#    env_file:
+#      - ./MiroFish/.env
+#    networks:
+#      - quant_net
+#    volumes:
+#      - ./MiroFish/backend/uploads:/app/backend/uploads
 
   # 2. Advanced Multicore BTC Bot
   btc-master-bot:
@@ -27,14 +27,14 @@ services:
     container_name: btc_multicore_bot
     restart: unless-stopped
     depends_on:
-      mirofish-backend:
-        condition: service_started
+#      mirofish-backend:
+#        condition: service_started
       neo4j:
         condition: service_started
     env_file:
       - .env
     environment:
-      - MIROFISH_API_URL=http://mirofish-backend:8000/api
+#      - MIROFISH_API_URL=http://mirofish-backend:8000/api
       - BINANCE_API_KEY=${BINANCE_API_KEY}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET}
       - NEO4J_URI=bolt://neo4j:7687
