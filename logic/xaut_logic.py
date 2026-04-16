@@ -48,9 +48,10 @@ class XAUTAnalyzer:
         df['ratio_sma50'] = ratio.rolling(window=50, min_periods=50).mean()
 
         # ── RSI do Ratio (14 periodos) ────────────────────────────────────
-        delta = ratio.diff()
-        gain  = delta.where(delta > 0, 0.0).rolling(window=14).mean()
-        loss  = (-delta.where(delta < 0, 0.0)).rolling(window=14).mean()
+        # BOLT OPTIMIZATION: Replaced pd.Series.where() with vectorized np.maximum
+        delta = ratio.diff().values
+        gain  = pd.Series(np.maximum(delta, 0.0), index=ratio.index).rolling(window=14).mean()
+        loss  = pd.Series(np.maximum(-delta, 0.0), index=ratio.index).rolling(window=14).mean()
         rs    = gain / loss.replace(0, np.nan)
         df['ratio_rsi'] = 100 - (100 / (1 + rs))
 
@@ -58,8 +59,10 @@ class XAUTAnalyzer:
         std20 = ratio.rolling(window=20).std()
         df['bb_upper']  = df['ratio_sma20'] + 2 * std20
         df['bb_lower']  = df['ratio_sma20'] - 2 * std20
-        band_width      = (df['bb_upper'] - df['bb_lower']).replace(0, np.nan)
-        df['bb_pct']    = (ratio - df['bb_lower']) / band_width  # 0=fundo, 1=topo
+
+        # BOLT OPTIMIZATION: Replaced .replace(0, np.nan) with np.where
+        band_width      = df['bb_upper'] - df['bb_lower']
+        df['bb_pct']    = np.where(band_width == 0, 0, (ratio - df['bb_lower']) / band_width)  # 0=fundo, 1=topo
 
         # ── Slope da SMA20 (momentum de curto prazo do ratio) ─────────────
         # Slope positivo = ratio subindo (XAUT valorizando vs BTC)
