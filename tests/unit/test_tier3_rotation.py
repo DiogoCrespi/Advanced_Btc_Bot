@@ -20,6 +20,44 @@ def test_xaut_analyzer_features(sample_ohlcv):
     assert not df_feat.isnull().values.any()
     assert len(df_feat) > 0
 
+def test_compute_ratio_features_logic():
+    """Testa a logica matematica das features calculadas por compute_ratio_features."""
+    analyzer = XAUTAnalyzer()
+    dates = pd.date_range(start="2024-01-01", periods=100, freq="h")
+    # Semente fixa para previsibilidade no teste
+    np.random.seed(42)
+    # Array com tendencia e ruido para ter variancia, ganhos e perdas (evita NaNs no RSI e Bollinger Bands)
+    close = np.linspace(100, 200, 100) + np.random.normal(0, 1.0, 100)
+    df = pd.DataFrame({
+        'open': close,
+        'high': close + 1,
+        'low': close - 1,
+        'close': close,
+        'volume': 10
+    }, index=dates)
+
+    df_feat = analyzer.compute_ratio_features(df)
+
+    # max window e 50 periodos (ratio_sma50). Como usamos diff(5) na SMA20,
+    # nao adiciona NaNs alem do window 50. Porem RSI e slope etc podem adicionar.
+    # Pela natureza dos dados, len deve ser ao redor de 50.
+    assert len(df_feat) > 0
+
+    # Verifica ultimos valores das medias
+    last_close_20 = close[-20:]
+    last_close_50 = close[-50:]
+
+    assert df_feat['ratio_sma20'].iloc[-1] == pytest.approx(np.mean(last_close_20))
+    assert df_feat['ratio_sma50'].iloc[-1] == pytest.approx(np.mean(last_close_50))
+
+    # Verifica Bollinger Bands
+    std20 = np.std(last_close_20, ddof=1)
+    expected_upper = np.mean(last_close_20) + 2 * std20
+    expected_lower = np.mean(last_close_20) - 2 * std20
+
+    assert df_feat['bb_upper'].iloc[-1] == pytest.approx(expected_upper)
+    assert df_feat['bb_lower'].iloc[-1] == pytest.approx(expected_lower)
+
 def test_xaut_buy_signal(xaut_buy_signal_df):
     analyzer = XAUTAnalyzer()
     df_feat = analyzer.compute_ratio_features(xaut_buy_signal_df)
