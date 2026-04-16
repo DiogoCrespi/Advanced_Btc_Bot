@@ -25,6 +25,9 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     
+    # API Auth配置
+    API_KEY = os.environ.get('API_KEY') or os.environ.get('SECRET_KEY')
+
     # CORS配置
     allowed_origins_env = os.environ.get('ALLOWED_ORIGINS', '')
     if allowed_origins_env == '*':
@@ -80,6 +83,9 @@ class Config:
         # SECRET_KEY para seguranca do Flask
         if not cls.SECRET_KEY:
             errors.append("SECRET_KEY 未配置")
+        # API_KEY required for endpoints
+        if not cls.API_KEY:
+            errors.append("API_KEY 或 SECRET_KEY 未配置")
         # ZEP_API_KEY ainda eh verificado
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")

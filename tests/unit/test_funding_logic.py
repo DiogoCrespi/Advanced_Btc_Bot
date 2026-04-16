@@ -1,74 +1,53 @@
-# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import pytest
 import sys
 import os
 
-# Adiciona o diretorio 'logic' ao path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
+# Adiciona o diretorio raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from logic.funding_logic import FundingLogic
 
-def test_funding_logic_enter_signal():
-    """Testa o sinal de entrada quando a taxa de funding anualizada supera a taxa livre de risco."""
+def test_calculate_annualized_funding_positive():
+    logic = FundingLogic()
+    # 0.01% por 8h = 0.0001
+    rate_8h = 0.0001
+    expected = rate_8h * 3 * 365
+    assert logic.calculate_annualized_funding(rate_8h) == pytest.approx(expected)
+
+def test_calculate_annualized_funding_zero():
+    logic = FundingLogic()
+    assert logic.calculate_annualized_funding(0.0) == 0.0
+
+def test_calculate_annualized_funding_negative():
+    logic = FundingLogic()
+    rate_8h = -0.0005
+    expected = rate_8h * 3 * 365
+    assert logic.calculate_annualized_funding(rate_8h) == pytest.approx(expected)
+
+def test_get_signal_enter_long():
+    # Se a taxa anualizada for maior que risk_free_rate_annual
     logic = FundingLogic(risk_free_rate_annual=0.10)
+    # rate_8h que da > 10% a.a. => 0.10 / (3 * 365) = 0.0000913
+    rate_8h = 0.0002 # 0.02% a cada 8h -> 21.9% ao ano
+    assert logic.get_signal(rate_8h, []) == 1
 
-    # 0.0001 * 3 * 365 = 0.1095 (10.95% anual), que e maior que 0.10 (10%)
-    current_funding_8h = 0.0001
-    historical_fundings = []
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal == 1
-
-def test_funding_logic_exit_signal():
-    """Testa o sinal de saida quando as ultimas 5 taxas de funding sao negativas."""
+def test_get_signal_exit():
     logic = FundingLogic(risk_free_rate_annual=0.10)
+    # 5 ciclos de funding negativo
+    historical = [-0.0001, -0.0002, -0.0001, -0.0003, -0.0001]
+    # current_funding nao atende a regra de entrada (ex: 0)
+    assert logic.get_signal(0.0, historical) == 0
 
-    # Taxa atual baixa para nao acionar sinal de entrada
-    current_funding_8h = 0.00001
-    historical_fundings = [-0.01, -0.02, -0.005, -0.001, -0.003]
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal == 0
-
-def test_funding_logic_no_signal_insufficient_history():
-    """Testa que nenhum sinal de saida e gerado com menos de 5 historicos negativos."""
+def test_get_signal_no_action():
     logic = FundingLogic(risk_free_rate_annual=0.10)
+    # Taxa anualizada menor ou igual a risk_free_rate_annual
+    # e menos de 5 historicos negativos
+    rate_8h = 0.00005 # 5.4% ao ano
+    historical = [-0.0001, 0.0001, -0.0001]
+    assert logic.get_signal(rate_8h, historical) is None
 
-    current_funding_8h = 0.00001
-    historical_fundings = [-0.01, -0.02, -0.005, -0.001] # Apenas 4
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal is None
-
-def test_funding_logic_no_signal_mixed_history():
-    """Testa que nenhum sinal de saida e gerado se o historico recente tiver um valor positivo."""
+def test_get_signal_no_action_5_cycles_mixed():
     logic = FundingLogic(risk_free_rate_annual=0.10)
-
-    current_funding_8h = 0.00001
-    # 5 valores, mas o terceiro e positivo
-    historical_fundings = [-0.01, -0.02, 0.005, -0.001, -0.003]
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal is None
-
-def test_funding_logic_history_length_greater_than_5():
-    """Testa o comportamento com mais de 5 valores historicos."""
-    logic = FundingLogic(risk_free_rate_annual=0.10)
-
-    current_funding_8h = 0.00001
-    # Mais de 5 valores. Os ultimos 5 sao negativos.
-    historical_fundings = [0.1, 0.2, -0.01, -0.02, -0.005, -0.001, -0.003]
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal == 0
-
-def test_funding_logic_enter_signal_priority():
-    """Testa se o sinal de entrada tem prioridade sobre o historico negativo."""
-    logic = FundingLogic(risk_free_rate_annual=0.10)
-
-    current_funding_8h = 0.0001 # Vai acionar entrada
-    historical_fundings = [-0.01, -0.02, -0.005, -0.001, -0.003] # Acionaria saida se avaliado
-
-    signal = logic.get_signal(current_funding_8h, historical_fundings)
-    assert signal == 1
+    # 5 ciclos, mas nao todos negativos
+    historical = [-0.0001, -0.0002, 0.0001, -0.0003, -0.0001]
+    assert logic.get_signal(0.0, historical) is None

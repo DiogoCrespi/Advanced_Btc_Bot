@@ -390,13 +390,17 @@ class DataEngine:
             dt[f'feat_bb_u{suf}'] = u
             dt[f'feat_bb_m{suf}'] = sma
             dt[f'feat_bb_l{suf}'] = lw
-            dt[f'feat_bb_dist_pct{suf}'] = (dt[cl] - lw) / (u - lw)
+            # BOLT OPTIMIZATION: Avoid division by zero warnings and use np.where
+            bb_range = u - lw
+            dt[f'feat_bb_dist_pct{suf}'] = np.where(bb_range == 0, 0, (dt[cl] - lw) / bb_range)
 
         def add_rsi(dt, cl, l, suf):
-            delta = dt[cl].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=l).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=l).mean()
-            rs = gain / loss
+            # BOLT OPTIMIZATION: Replaced pd.Series.where() with vectorized np.maximum
+            delta = dt[cl].diff().values
+            gain = pd.Series(np.maximum(delta, 0), index=dt.index).rolling(window=l).mean()
+            loss = pd.Series(np.maximum(-delta, 0), index=dt.index).rolling(window=l).mean()
+            # Prevent division by zero internally via replacing zero loss with NaN initially
+            rs = gain / loss.replace(0, np.nan)
             dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
 
         # 1H Base Features

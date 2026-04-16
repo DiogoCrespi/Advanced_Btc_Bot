@@ -24,8 +24,26 @@ class BacktestEngine(BaseExchange):
         self.active_orders: Dict[str, Dict[str, Any]] = {}
         self.trade_history: List[Dict[str, Any]] = []
 
+        self._max_buy_price = -float('inf')
+        self._min_sell_price = float('inf')
+
         self.lock = threading.Lock()
         print("Backtest Engine Initialized. Mode: SIMULATION")
+
+    def _update_order_price_bounds(self) -> None:
+        max_buy = -float('inf')
+        min_sell = float('inf')
+        for order in self.active_orders.values():
+            if order['type'] == 'LIMIT':
+                price = order.get('price', 0.0)
+                if order['side'] == 'BUY':
+                    if price > max_buy:
+                        max_buy = price
+                elif order['side'] == 'SELL':
+                    if price < min_sell:
+                        min_sell = price
+        self._max_buy_price = max_buy
+        self._min_sell_price = min_sell
 
     def load_data(self, df: pd.DataFrame) -> None:
         """
@@ -61,20 +79,25 @@ class BacktestEngine(BaseExchange):
             # Simple order processing: evaluate limit orders against new high/low
             current_low = self._low_arr[self.current_index]
             current_high = self._high_arr[self.current_index]
-            completed_orders = []
 
-            for order_id, order in self.active_orders.items():
-                if order['type'] == 'LIMIT':
-                    price = order.get('price', 0.0)
-                    if order['side'] == 'BUY' and current_low <= price:
-                        self._execute_order(order, price, is_maker=True)
-                        completed_orders.append(order_id)
-                    elif order['side'] == 'SELL' and current_high >= price:
-                        self._execute_order(order, price, is_maker=True)
-                        completed_orders.append(order_id)
+            if self.active_orders:
+                if current_low <= self._max_buy_price or current_high >= self._min_sell_price:
+                    completed_orders = []
 
-            for oid in completed_orders:
-                del self.active_orders[oid]
+                    for order_id, order in self.active_orders.items():
+                        if order['type'] == 'LIMIT':
+                            price = order.get('price', 0.0)
+                            if order['side'] == 'BUY' and current_low <= price:
+                                self._execute_order(order, price, is_maker=True)
+                                completed_orders.append(order_id)
+                            elif order['side'] == 'SELL' and current_high >= price:
+                                self._execute_order(order, price, is_maker=True)
+                                completed_orders.append(order_id)
+
+                    if completed_orders:
+                        for oid in completed_orders:
+                            del self.active_orders[oid]
+                        self._update_order_price_bounds()
 
             return True
 
@@ -170,6 +193,10 @@ class BacktestEngine(BaseExchange):
                     order['price'] = current_price
             elif order_type == 'LIMIT':
                 self.active_orders[order_id] = order
+                if side == 'BUY':
+                    self._max_buy_price = max(self._max_buy_price, float(order.get('price', 0.0)))
+                elif side == 'SELL':
+                    self._min_sell_price = min(self._min_sell_price, float(order.get('price', 0.0)))
 
             return order
 
@@ -177,6 +204,7 @@ class BacktestEngine(BaseExchange):
         with self.lock:
             if order_id in self.active_orders:
                 del self.active_orders[order_id]
+                self._update_order_price_bounds()
                 return {'symbol': symbol, 'orderId': order_id, 'status': 'CANCELED'}
             return {'symbol': symbol, 'orderId': order_id, 'status': 'NOT_FOUND'}
 
