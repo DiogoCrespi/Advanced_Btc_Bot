@@ -131,8 +131,6 @@ class XAUTAnalyzer:
             confidence = 0.52
             reason     = f"Sobrecompra Ratio (BB:{bb_pct:.2f})"
 
-        metrics = {'rsi': rsi, 'bb_pct': bb_pct, 'slope': slope}
-
         # Filtro de confianca minima
         if confidence < self.MIN_CONFIDENCE:
             signal = 0
@@ -140,7 +138,7 @@ class XAUTAnalyzer:
         # Clamp na confianca
         confidence = min(confidence, 0.98)
 
-        return signal, confidence, reason, metrics
+        return signal, confidence, reason
 
     def calc_pnl_btc(self, position: dict, current_ratio: float) -> float:
         """
