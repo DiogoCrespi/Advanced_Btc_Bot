@@ -21,8 +21,8 @@ class Watchdog(threading.Thread):
         self._is_running = True
         
         # Thresholds (Otimizados para Relatorio)
-        self.latency_threshold_ms = 1500  # 1.5 segundos (Alerta)
-        self.critical_latency_ms = 5000   # 5.0 segundos (Relatorio Critico)
+        self.latency_threshold_ms = 1000  # 1.0 segundo (Alerta)
+        self.critical_latency_ms = 1500   # 1.5 segundos (Relatorio Critico)
         self.ram_threshold_pct = 90.0     # 90% de uso
         self.heartbeat_threshold_sec = 300 # 5 minutos sem tick
 
