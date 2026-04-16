@@ -2,6 +2,8 @@
 import pytest
 import sys
 import os
+import pandas as pd
+import numpy as np
 
 # Adiciona o diretorio 'logic' ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logic')))
@@ -103,3 +105,84 @@ def test_xaut_calc_pnl():
 
     assert analyzer.calc_pnl_btc(pos_zero_cost, current_ratio) == pytest.approx(0.5)
     assert analyzer.calc_pnl_pct(pos_zero_cost, current_ratio) == 0.0
+
+def test_xaut_get_signal_branches():
+    """Testa exaustivamente todas as branches condicionais do metodo get_signal."""
+    analyzer = XAUTAnalyzer()
+
+    # Branch 1: Invalid input (None)
+    sig, conf, reason = analyzer.get_signal(None)
+    assert sig == 0
+    assert conf == 0.0
+    assert reason == "Dados insuficientes"
+
+    # Branch 2: Invalid input (len < 2)
+    df_empty = pd.DataFrame()
+    sig, conf, reason = analyzer.get_signal(df_empty)
+    assert sig == 0
+    assert conf == 0.0
+    assert reason == "Dados insuficientes"
+
+    # Branch 3: Corrupted data (NaN)
+    df_nan = pd.DataFrame({'ratio_rsi': [np.nan, np.nan], 'bb_pct': [0.5, 0.5], 'ratio_slope': [0.0, 0.0]})
+    sig, conf, reason = analyzer.get_signal(df_nan)
+    assert sig == 0
+    assert conf == 0.0
+    assert reason == "Features invalidas (NaN/Inf)"
+
+    # Helper function to create mock df
+    def make_df(rsi, bb, slope=0.0):
+        return pd.DataFrame({
+            'ratio_rsi': [50.0, rsi],
+            'bb_pct': [0.5, bb],
+            'ratio_slope': [0.0, slope]
+        })
+
+    # Branch 4: Strong Buy Signal (RSI < RSI_BUY_STRONG, BB < BB_BUY_ZONE)
+    # analyzer.RSI_BUY_STRONG = 32, analyzer.BB_BUY_ZONE = 0.15
+    df_strong_buy = make_df(30, 0.1, 0.0)
+    sig, conf, reason = analyzer.get_signal(df_strong_buy)
+    assert sig == 1
+    assert conf >= 0.55
+    assert "XAUT Barato" in reason
+
+    # Branch 5: Mild Buy Signal (RSI < RSI_BUY_MILD, slope > 0.0002)
+    # analyzer.RSI_BUY_MILD = 42
+    df_mild_buy = make_df(40, 0.5, 0.0003)
+    sig, conf, reason = analyzer.get_signal(df_mild_buy)
+    assert sig == 1
+    assert conf >= 0.53
+    assert "Momentum Ouro Crescente" in reason
+
+    # Branch 6: Reversion Bottom Buy (BB < BB_BUY_ZONE, slope > 0)
+    df_rev_buy = make_df(50, 0.1, 0.0001)
+    sig, conf, reason = analyzer.get_signal(df_rev_buy)
+    # The initial signal assigned is 1, confidence 0.52.
+    # MIN_CONFIDENCE check: 0.52 < 0.55 -> signal becomes 0.
+    assert sig == 0 # due to min_confidence filter!
+    assert conf == 0.52
+    assert "Mean Reversion Fundo" in reason
+
+    # Branch 7: Strong Sell Signal (RSI > RSI_SELL_STRONG, BB > BB_SELL_ZONE)
+    # analyzer.RSI_SELL_STRONG = 68, analyzer.BB_SELL_ZONE = 0.85
+    df_strong_sell = make_df(70, 0.9, 0.0)
+    sig, conf, reason = analyzer.get_signal(df_strong_sell)
+    assert sig == -1
+    assert conf >= 0.55
+    assert "XAUT Caro" in reason
+
+    # Branch 8: Mild Sell Signal (RSI > RSI_SELL_MILD, BB > BB_SELL_ZONE)
+    # analyzer.RSI_SELL_MILD = 58
+    df_mild_sell = make_df(60, 0.9, 0.0)
+    sig, conf, reason = analyzer.get_signal(df_mild_sell)
+    # Confidence 0.52 < 0.55 -> signal becomes 0
+    assert sig == 0
+    assert conf == 0.52
+    assert "Sobrecompra Ratio" in reason
+
+    # Branch 9: Neutral
+    df_neutral = make_df(50, 0.5, 0.0)
+    sig, conf, reason = analyzer.get_signal(df_neutral)
+    assert sig == 0
+    assert conf == 0.0
+    assert reason == "Ratio Neutro"
