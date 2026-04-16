@@ -90,9 +90,10 @@ class NewsFetcher:
         self._flags_reset  = time.time()
 
         # MiroFish Integration
+        self.use_mirofish = os.getenv("USE_MIROFISH", "True").lower() in ("true", "1", "yes")
         self.mirofish_url = os.getenv("MIROFISH_API_URL")
         self.simulation_id = os.getenv("MIROFISH_SIMULATION_ID", "live_bot_sim")
-        if self.mirofish_url:
+        if self.mirofish_url and self.use_mirofish:
             from logic.mirofish_client import MiroFishClient
             self.miro_client = MiroFishClient(self.mirofish_url)
         else:

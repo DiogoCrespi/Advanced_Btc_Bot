@@ -11,3 +11,4 @@ neo4j>=5.18.0
 langgraph>=0.0.30
 langchain-openai>=0.1.0
 pytest>=8.0.0
+psutil>=5.9.0

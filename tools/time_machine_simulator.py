@@ -81,32 +81,39 @@ class TimeMachineSimulator:
                 if signal != 0 and prob > self.prob_threshold:
                     self.trades += 1
                     # SL/TP Logic (look ahead in the test segment or until next training)
-                    trade_result = 0
                     current_price = float(close_arr[j])
+                    future_closes = close_arr[j+1:]
                     
-                    found_exit = False
-                    for k in range(j + 1, len(processed_test)):
-                        check_price = float(close_arr[k])
-                        price_ret = (check_price / current_price) - 1
+                    if len(future_closes) == 0:
+                        trade_result = 0
+                    else:
+                        price_rets = (future_closes / current_price) - 1.0
                         
-                        # Apply Long strategy
                         if signal == 1:
-                            if price_ret >= self.take_profit:
-                                trade_result = self.take_profit; found_exit = True; self.wins += 1; break
-                            elif price_ret <= -self.stop_loss:
-                                trade_result = -self.stop_loss; found_exit = True; break
-                        # Apply Short strategy
-                        elif signal == -1:
-                            if price_ret <= -self.take_profit:
-                                trade_result = self.take_profit; found_exit = True; self.wins += 1; break
-                            elif price_ret >= self.stop_loss:
-                                trade_result = -self.stop_loss; found_exit = True; break
-                    
-                    # If no exit hit by end of segment, take current return
-                    if not found_exit and j + 1 < len(processed_test):
-                        final_ret = (float(close_arr[-1]) / current_price) - 1
-                        trade_result = final_ret * signal
-                        if trade_result > 0: self.wins += 1
+                            tp_cond = price_rets >= self.take_profit
+                            sl_cond = price_rets <= -self.stop_loss
+                        else:
+                            tp_cond = price_rets <= -self.take_profit
+                            sl_cond = price_rets >= self.stop_loss
+
+                        tp_idx = np.argmax(tp_cond) if tp_cond.any() else -1
+                        sl_idx = np.argmax(sl_cond) if sl_cond.any() else -1
+
+                        if tp_idx != -1 and sl_idx != -1:
+                            if tp_idx < sl_idx:
+                                trade_result = self.take_profit
+                                self.wins += 1
+                            else:
+                                trade_result = -self.stop_loss
+                        elif tp_idx != -1:
+                            trade_result = self.take_profit
+                            self.wins += 1
+                        elif sl_idx != -1:
+                            trade_result = -self.stop_loss
+                        else:
+                            final_ret = float(price_rets[-1]) * signal
+                            trade_result = final_ret
+                            if final_ret > 0: self.wins += 1
                     
                     self.equity *= (1 + trade_result)
                     self.equity_curve.append(self.equity)
