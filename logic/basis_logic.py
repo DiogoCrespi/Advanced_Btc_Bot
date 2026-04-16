@@ -29,7 +29,7 @@ class BasisLogic:
         now = datetime.utcnow()
         days_to_expiry = (expiry_date - now).total_seconds() / (24 * 3600)
         
-        if days_to_expiry <= 0 or spot_price <= 0:
+        if days_to_expiry <= 0 or spot_price <= 0 or future_price <= 0:
             return 0
             
         premium = (future_price / spot_price) - 1

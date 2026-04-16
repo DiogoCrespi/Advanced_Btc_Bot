@@ -28,15 +28,6 @@ class XAUTAnalyzer:
         """
         Recebe um DataFrame OHLCV do par XAUTBTC e retorna o mesmo DF
         enriquecido com features do ratio para analise de sinal.
-
-        Parametros
-        ----------
-        df : DataFrame com colunas 'open', 'high', 'low', 'close', 'volume'
-             indexado por DatetimeIndex (velas horarias).
-
-        Retorna
-        -------
-        DataFrame com colunas adicionais de features, sem NaNs.
         """
         df = df.copy()
 
@@ -48,7 +39,6 @@ class XAUTAnalyzer:
         df['ratio_sma50'] = ratio.rolling(window=50, min_periods=50).mean()
 
         # ── RSI do Ratio (14 periodos) ────────────────────────────────────
-        # BOLT OPTIMIZATION: Replaced pd.Series.where() with vectorized np.maximum
         delta = ratio.diff().values
         gain  = pd.Series(np.maximum(delta, 0.0), index=ratio.index).rolling(window=14).mean()
         loss  = pd.Series(np.maximum(-delta, 0.0), index=ratio.index).rolling(window=14).mean()
@@ -60,12 +50,10 @@ class XAUTAnalyzer:
         df['bb_upper']  = df['ratio_sma20'] + 2 * std20
         df['bb_lower']  = df['ratio_sma20'] - 2 * std20
 
-        # BOLT OPTIMIZATION: Replaced .replace(0, np.nan) with np.where
         band_width      = df['bb_upper'] - df['bb_lower']
         df['bb_pct']    = np.where(band_width == 0, 0, (ratio - df['bb_lower']) / band_width)  # 0=fundo, 1=topo
 
         # ── Slope da SMA20 (momentum de curto prazo do ratio) ─────────────
-        # Slope positivo = ratio subindo (XAUT valorizando vs BTC)
         df['ratio_slope'] = df['ratio_sma20'].diff(5) / df['ratio_sma20']
 
         # ── Distancia Percentual do Preco a SMA50 ────────────────────────
@@ -73,19 +61,13 @@ class XAUTAnalyzer:
 
         return df.dropna()
 
-    def get_signal(self, df: pd.DataFrame) -> tuple[int, float, str]:
+    def get_signal(self, df: pd.DataFrame) -> tuple:
         """
         Analisa as features do ratio XAUTBTC e retorna um sinal de trading.
-
-        Retorna
-        -------
-        (signal, confidence, reason)
-            signal      : 1 = comprar XAUT | -1 = vender XAUT→BTC | 0 = aguardar
-            confidence  : float [0.0, 1.0]
-            reason      : string descritiva do motivo
+        Retorna: (signal, confidence, reason, metrics)
         """
         if df is None or len(df) < 2:
-            return 0, 0.0, "Dados insuficientes"
+            return 0, 0.0, "Dados insuficientes", {}
 
         rsi    = float(df['ratio_rsi'].values[-1]) if 'ratio_rsi' in df.columns else 50.0
         bb_pct = float(df['bb_pct'].values[-1]) if 'bb_pct' in df.columns else 0.5
@@ -93,7 +75,7 @@ class XAUTAnalyzer:
 
         # Validacao de dados corrompidos
         if not all(np.isfinite([rsi, bb_pct, slope])):
-            return 0, 0.0, "Features invalidas (NaN/Inf)"
+            return 0, 0.0, "Features invalidas (NaN/Inf)", {}
 
         signal     = 0
         confidence = 0.0
@@ -101,32 +83,27 @@ class XAUTAnalyzer:
 
         # ── Sinais de COMPRA XAUT (ratio baixo = XAUT barato vs BTC) ─────
         if rsi < self.RSI_BUY_STRONG and bb_pct < self.BB_BUY_ZONE:
-            # Forca maxima: RSI baixo + preco no fundo das Bandas
             signal     = 1
             confidence = 0.55 + max(0, (self.RSI_BUY_STRONG - rsi) / 80)
             reason     = f"XAUT Barato vs BTC (RSI:{rsi:.0f}+BB)"
 
         elif rsi < self.RSI_BUY_MILD and slope > 0.0002:
-            # Momentum ouro crescente com RSI ainda baixo
             signal     = 1
             confidence = 0.53 + max(0, (self.RSI_BUY_MILD - rsi) / 80)
             reason     = f"Momentum Ouro Crescente (RSI:{rsi:.0f})"
 
         elif bb_pct < self.BB_BUY_ZONE and slope > 0:
-            # Preco no fundo das Bandas + slope comecando a virar
             signal     = 1
             confidence = 0.52
             reason     = f"Mean Reversion Fundo (BB:{bb_pct:.2f})"
 
         # ── Sinais de VENDA XAUT→BTC (ratio alto = XAUT caro vs BTC) ─────
         elif rsi > self.RSI_SELL_STRONG and bb_pct > self.BB_SELL_ZONE:
-            # Forca maxima: RSI alto + preco no topo das Bandas
             signal     = -1
             confidence = 0.55 + max(0, (rsi - self.RSI_SELL_STRONG) / 80)
             reason     = f"XAUT Caro vs BTC (RSI:{rsi:.0f}+BB)"
 
         elif rsi > self.RSI_SELL_MILD and bb_pct > self.BB_SELL_ZONE:
-            # RSI moderadamente alto + no topo de Bollinger
             signal     = -1
             confidence = 0.52
             reason     = f"Sobrecompra Ratio (BB:{bb_pct:.2f})"
@@ -138,53 +115,23 @@ class XAUTAnalyzer:
         # Clamp na confianca
         confidence = min(confidence, 0.98)
 
-        return signal, confidence, reason
+        metrics = {'rsi': rsi, 'bb_pct': bb_pct, 'slope': slope}
+
+        return signal, confidence, reason, metrics
 
     def calc_pnl_btc(self, position: dict, current_ratio: float) -> float:
-        """
-        Calcula o PnL em BTC de uma posicao XAUT aberta.
-
-        PnL BTC = (qty_XAUT × ratio_atual) − custo_BTC_entrada
-        """
         return (position['xaut_qty'] * current_ratio) - position['cost_btc']
 
     def calc_pnl_pct(self, position: dict, current_ratio: float) -> float:
-        """
-        Calcula o PnL percentual relativo ao custo de entrada em BTC.
-        """
         pnl       = self.calc_pnl_btc(position, current_ratio)
         cost_btc  = position['cost_btc']
         return pnl / cost_btc if cost_btc > 0 else 0.0
 
-    def is_dca_allowed(
-        self,
-        existing_positions: list,
-        current_ratio: float,
-        min_distance_pct: float = 0.015,
-    ) -> bool:
-        """
-        Verifica se e seguro abrir mais uma posicao via DCA.
-
-        Regra: a nova entrada deve estar ao menos `min_distance_pct` (1,5%)
-        abaixo da entrada mais proxima ja existente, para evitar empilhamento
-        de posicoes no mesmo nivel de preco.
-
-        Parametros
-        ----------
-        existing_positions : lista de dicts de posicoes abertas
-        current_ratio      : ratio XAUTBTC atual
-        min_distance_pct   : distancia minima (default 1,5%)
-        """
-        if not existing_positions:
-            return True  # Nenhuma posicao aberta → DCA sempre permitido
-
+    def is_dca_allowed(self, existing_positions: list, current_ratio: float, min_distance_pct: float = 0.015) -> bool:
+        if not existing_positions: return True
         for pos in existing_positions:
             entry = pos.get('ratio_entry', 0)
-            if entry <= 0:
-                continue
-            # Distancia percentual entre o ratio atual e a entrada existente
+            if entry <= 0: continue
             dist = abs(current_ratio - entry) / entry
-            if dist < min_distance_pct:
-                return False  # Muito proximo de uma entrada existente
-
+            if dist < min_distance_pct: return False
         return True

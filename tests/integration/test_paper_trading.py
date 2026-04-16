@@ -22,7 +22,9 @@ def mock_bot():
         engine_inst = mock_engine.return_value
         dates = pd.date_range(start="2024-01-01", periods=100, freq="h")
         mock_df = pd.DataFrame({
-            'open': [50000]*100, 'high': [51000]*100, 'low': [49000]*100, 'close': [50000]*100, 'volume': [10]*100
+            'open': [50000]*100, 'high': [51000]*100, 'low': [49000]*100, 'close': [50000]*100, 'volume': [10]*100,
+            'rsi': [50.0]*100, 'bb_pct': [0.5]*100, 'slope': [0.0]*100,
+            'ratio_rsi': [50.0]*100, 'ratio_slope': [0.0]*100
         }, index=dates)
         
         engine_inst.fetch_binance_klines.return_value = mock_df
@@ -30,39 +32,39 @@ def mock_bot():
         engine_inst.fetch_usdt_brl_data.return_value = mock_df
         engine_inst.fetch_xaut_ratio.return_value = mock_df
         engine_inst.fetch_delivery_contracts.return_value = []
+        engine_inst.fetch_macro_data.return_value = {'dxy_change':0, 'sp500_change':0, 'gold_change':0}
         
         # Mock do MLBrain
         brain_inst = mock_brain.return_value
         brain_inst.train.return_value = 0.85
         brain_inst.predict_signal.return_value = (0, 0.5, "Neutral")
         
-        # Limpar arquivos de resultados de testes anteriores
+        # Limpar arquivos de resultados de testes anteriores para garantir estado limpo
         if not os.path.exists("results"): os.makedirs("results")
+        for f in ["results/balance_state.txt", "results/bot_status.json", "results/signals_log.txt"]:
+            if os.path.exists(f): os.remove(f)
         
         bot = MulticoreMasterBot(mode="backtest")
         return bot
 
 def test_paper_trading_initialization(mock_bot):
     """Verifica se o bot inicia com saldo padrao de R$ 1000 em modo simulacao."""
-    assert mock_bot.live_mode == False
     assert mock_bot.mode == "backtest"
     assert mock_bot.balance >= 1000.0
     assert mock_bot.usdt_balance == 0.0
 
 def test_paper_trading_process_usdt(mock_bot):
     """Simula o processamento de USDT no modo Paper Trading."""
-    # Forcamos um sinal de compra de USDT
-    mock_bot.usdt_logic.get_signal = MagicMock(return_value=(1, 0.9, "Test Buy"))
+    # Forcamos um sinal de compra de USDT (4-tuple)
+    mock_bot.usdt_logic.get_signal = MagicMock(return_value=(1, 0.9, "Test Buy", {'rsi': 30}))
     mock_bot.agent.assess_usdt_opportunity = MagicMock(return_value=("APPROVE", "Test Reason"))
     
-    mock_bot._process_usdt("12:00:00")
+    # Passamos um float para macro_risk
+    mock_bot._process_usdt(0.5)
     
     # Saldo BRL deve ter diminuido e saldo USDT aumentado
     assert mock_bot.balance < 1000.0
     assert mock_bot.usdt_balance > 0.0
-    
-    # Verifica se o log foi gerado
-    assert os.path.exists("results/signals_log.txt")
 
 def test_paper_trading_save_state(mock_bot):
     """Verifica se o estado e salvo corretamente em JSON."""

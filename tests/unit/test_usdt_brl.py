@@ -30,7 +30,7 @@ def test_usdt_buy_signal():
     df = pd.DataFrame({'close': close}, index=dates)
     df_feat = logic.compute_features(df)
     
-    signal, conf, reason = logic.get_signal(df_feat, macro_risk=0.1)
+    signal, conf, reason, metrics = logic.get_signal(df_feat, macro_risk=0.1)
     assert signal == 1
     assert "Discount" in reason
 
@@ -41,6 +41,6 @@ def test_usdt_safe_harbor_signal():
     df_feat = logic.compute_features(df)
     
     # Risco macro alto deve forcar compra mesmo sem sinal tecnico
-    signal, conf, reason = logic.get_signal(df_feat, macro_risk=0.9)
+    signal, conf, reason, metrics = logic.get_signal(df_feat, macro_risk=0.9)
     assert signal == 1
     assert "Safe Harbor" in reason

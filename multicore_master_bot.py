@@ -381,10 +381,13 @@ class MulticoreMasterBot:
             if sig == 1 and self.balance >= 100:
                 self.balance -= 100
                 self.usdt_balance += 100 / price
+                self.async_log(self.log_file, f"[USDT BUY] BRL 100 -> {100/price:.2f} USDT @ {price:.2f}")
                 self.save_balance(); self.save_state()
             elif sig == -1 and self.usdt_balance > 10:
+                old_usdt = self.usdt_balance
                 self.balance += self.usdt_balance * price * 0.999
                 self.usdt_balance = 0
+                self.async_log(self.log_file, f"[USDT SELL] {old_usdt:.2f} USDT -> BRL @ {price:.2f}")
                 self.save_balance(); self.save_state()
         return {"price": price, "rsi": metrics.get('rsi', 50), "balance": self.usdt_balance}
 
