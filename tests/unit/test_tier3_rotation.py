@@ -22,7 +22,7 @@ def test_xaut_buy_signal(xaut_buy_signal_df):
     analyzer = XAUTAnalyzer()
     df_feat = analyzer.compute_ratio_features(xaut_buy_signal_df)
     assert len(df_feat) > 0
-    signal, confidence, reason = analyzer.get_signal(df_feat)
+    signal, confidence, reason, metrics = analyzer.get_signal(df_feat)
     
     # E aceitavel sinal 0 se a confianca for baixa, mas o motivo deve indicar a direcao ou o filtro
     assert signal in [0, 1]
@@ -34,29 +34,58 @@ def test_xaut_sell_signal(xaut_sell_signal_df):
     analyzer = XAUTAnalyzer()
     df_feat = analyzer.compute_ratio_features(xaut_sell_signal_df)
     assert len(df_feat) > 0
-    signal, confidence, reason = analyzer.get_signal(df_feat)
+    signal, confidence, reason, metrics = analyzer.get_signal(df_feat)
     
     assert signal in [0, -1]
     if signal == -1:
         assert confidence >= analyzer.MIN_CONFIDENCE
     assert "XAUT" in reason or "Neutro" in reason
 
-def test_xaut_dca_rejection():
-    """TESTE DE REJEICAO: Nao deve permitir DCA se o preco estiver muito proximo da entrada anterior."""
+def test_is_dca_allowed():
+    """Testa a logica de permissao para DCA (Dollar Cost Averaging)."""
     analyzer = XAUTAnalyzer()
-    existing_positions = [
-        {'id': 1, 'ratio_entry': 0.05, 'xaut_qty': 0.01}
+
+    # Caso 1: Nenhuma posicao existente -> DCA permitido
+    assert analyzer.is_dca_allowed([], 0.05) == True
+
+    # Caso 2: Posicoes invalidas (sem ratio_entry, zero, negativo) sao ignoradas
+    invalid_positions = [
+        {'id': 1},
+        {'id': 2, 'ratio_entry': 0},
+        {'id': 3, 'ratio_entry': -0.05}
     ]
-    
-    # Caso 1: Preco muito proximo (0.5% de distancia, limite e 1.5%)
-    current_ratio = 0.0501 
-    allowed = analyzer.is_dca_allowed(existing_positions, current_ratio, min_distance_pct=0.015)
-    assert allowed == False
-    
-    # Caso 2: Preco longe o suficiente (2% de distancia)
-    current_ratio = 0.0515
-    allowed = analyzer.is_dca_allowed(existing_positions, current_ratio, min_distance_pct=0.015)
-    assert allowed == True
+    assert analyzer.is_dca_allowed(invalid_positions, 0.05) == True
+
+    # Caso 3: Preco muito proximo acima (dentro de 1.5%) -> DCA rejeitado
+    existing = [{'ratio_entry': 0.05}]
+    # 0.0505 e +1% de 0.05
+    assert analyzer.is_dca_allowed(existing, 0.0505) == False
+
+    # Caso 4: Preco muito proximo abaixo (dentro de 1.5%) -> DCA rejeitado
+    # 0.0495 e -1% de 0.05
+    assert analyzer.is_dca_allowed(existing, 0.0495) == False
+
+    # Caso 5: Preco suficientemente acima (> 1.5%) -> DCA permitido
+    # 0.051 e +2% de 0.05
+    assert analyzer.is_dca_allowed(existing, 0.051) == True
+
+    # Caso 6: Preco suficientemente abaixo (< 1.5%) -> DCA permitido
+    # 0.049 e -2% de 0.05
+    assert analyzer.is_dca_allowed(existing, 0.049) == True
+
+    # Caso 7: Multiplas posicoes - uma muito proxima -> DCA rejeitado
+    multi_positions = [
+        {'ratio_entry': 0.04}, # Longe
+        {'ratio_entry': 0.05}  # Perto
+    ]
+    assert analyzer.is_dca_allowed(multi_positions, 0.0505) == False
+
+    # Caso 8: Multiplas posicoes - todas distantes -> DCA permitido
+    multi_positions_far = [
+        {'ratio_entry': 0.04}, # 20% de dist
+        {'ratio_entry': 0.06}  # 20% de dist
+    ]
+    assert analyzer.is_dca_allowed(multi_positions_far, 0.05) == True
 
 def test_xaut_calc_pnl():
     """Testa o calculo de PnL em BTC e percentual."""
