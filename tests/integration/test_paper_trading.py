@@ -37,7 +37,7 @@ def mock_bot():
         # Mock do MLBrain
         brain_inst = mock_brain.return_value
         brain_inst.train.return_value = 0.85
-        brain_inst.predict_signal.return_value = (0, 0.5, "Neutral")
+        brain_inst.predict_signal.return_value = (0, 0.5, "Neutral", 1.0)
         
         # Limpar arquivos de resultados de testes anteriores para garantir estado limpo
         if not os.path.exists("results"): os.makedirs("results")

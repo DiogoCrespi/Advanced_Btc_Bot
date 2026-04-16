@@ -80,7 +80,7 @@ class StrategyOptimizer:
                 if use_ml:
                     # ML Mode uses predicted class
                     feat_vec = feature_arr[i]
-                    signal, prob, reason = self.ml_brain.predict_signal(feat_vec, feature_cols)
+                    signal, prob, reason, rel = self.ml_brain.predict_signal(feat_vec, feature_cols)
                     if signal == 1:
                         position = 1
                         entry_price = current_price

@@ -55,10 +55,11 @@ def test_ml_train_predict(mock_ml_data):
     feat_cols = [c for c in df_feat.columns if c.startswith('feat_')]
     last_row = df_feat[feat_cols].values[-1]
     
-    signal, prob, reason = brain.predict_signal(last_row)
+    signal, prob, reason, rel = brain.predict_signal(last_row)
     assert signal in [-1, 0, 1]
     assert 0 <= prob <= 1.0
     assert isinstance(reason, str)
+    assert 0 <= rel <= 1.0
 
 def test_ml_brain_nan_inf_handling():
     """TESTE DE REJEICAO: Features corrompidas (NaN/Inf) devem retornar sinal neutro (0)."""
@@ -71,12 +72,12 @@ def test_ml_brain_nan_inf_handling():
     
     # Caso 1: NaN em uma feature
     nan_row = np.array([0.5, np.nan, 0.2])
-    signal, prob, reason = brain.predict_signal(nan_row)
+    signal, prob, reason, rel = brain.predict_signal(nan_row)
     assert signal == 0
     assert "NaN ou Inf" in reason
     
     # Caso 2: Inf em uma feature
     inf_row = np.array([0.5, np.inf, 0.2])
-    signal, prob, reason = brain.predict_signal(inf_row)
+    signal, prob, reason, rel = brain.predict_signal(inf_row)
     assert signal == 0
     assert "NaN ou Inf" in reason

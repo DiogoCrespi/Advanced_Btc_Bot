@@ -46,15 +46,15 @@ def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0, min_conf=0.45):
         df['macro_risk'] = macro_risk
         df['btc_dominance'] = btc_dom
         df = brain.prepare_features(df)
-        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0
+        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0, 0.0
         
         current_price = float(df['close'].values[-1])
         curr_feat = df[brain.feature_cols].values[-1]
         
-        signal, prob, reason = brain.predict_signal(curr_feat, min_confidence=min_conf)
-        return signal, prob, reason, current_price
+        signal, prob, reason, reliability = brain.predict_signal(curr_feat, min_confidence=min_conf)
+        return signal, prob, reason, current_price, reliability
     except Exception as e:
-        return 0, 0.0, f"Erro Predicao: {e}", 0.0
+        return 0, 0.0, f"Erro Predicao: {e}", 0.0, 0.0
 
 class WebSocketSupervisor:
     def __init__(self, bot_instance):
@@ -180,6 +180,10 @@ class MulticoreMasterBot:
         self.last_tick = time.time()
         self.watchdog = Watchdog(self)
         self.watchdog.start()
+        
+        self.caution_mode = False
+        self.initial_equity = None # Sera setado no primeiro ciclo
+        self.check_caution_at = None
 
         self.log_queue = queue.Queue()
         self.log_thread = Thread(target=self._log_worker, daemon=True)
@@ -243,6 +247,7 @@ class MulticoreMasterBot:
                     s = json.loads(f.read())
                     self.usdt_balance = s.get("usdt_balance", 0.0)
                     self.xaut_positions = s.get("xaut_positions", [])
+                    self.caution_mode = s.get("caution_mode", False)
                     return s.get("positions", {})
             except Exception: pass
         self.usdt_balance = 0.0
@@ -250,7 +255,17 @@ class MulticoreMasterBot:
 
     def save_state(self):
         with self.pos_lock:
-            st = {"balance": self.balance, "usdt_balance": self.usdt_balance, "positions": self.positions, "xaut_positions": self.xaut_positions}
+            # Stats de confiabilidade dos cerebros
+            rel_stats = {asset: {"samples": self.brains[asset].n_samples, "score": self.brains[asset].reliability_score} for asset in self.assets}
+            
+            st = {
+                "balance": self.balance, 
+                "usdt_balance": self.usdt_balance, 
+                "positions": self.positions, 
+                "xaut_positions": self.xaut_positions,
+                "caution_mode": self.caution_mode,
+                "reliability_stats": rel_stats
+            }
         self.log_queue.put(("save_state", (self.status_file, st)))
 
     def notify_telegram(self, msg, title="BTC BOT"):
@@ -319,7 +334,7 @@ class MulticoreMasterBot:
             
             alpha += f"| {asset:8} : {sig['signal']:>2} | Prob: {sig['prob']:>5.1%} | {conv_label} ({sig['prob']:.1%}) | {sig['reason']:<20} |\n"
         
-        alpha += f"| [STRATEGIST] Decisao: {agent_res['decision']:8} | Mult: {agent_res['allocation_mult']:.2f} |\n"
+        alpha += f"| [STRATEGIST] Decisao: {agent_res['decision']:8} | Mult: {agent_res['allocation_mult']:.2f} | CAUTION: {str(self.caution_mode):5} |\n"
         alpha += f"+{'-'*80}+\n"
         
         # XAUT
@@ -510,9 +525,9 @@ class MulticoreMasterBot:
                         ]
                         
                         results = await asyncio.gather(*tasks)
-                        (sig, prob, reason, price) = results[0]
-                        (s_sig, s_prob, _, _) = results[1]
-                        (a_sig, a_prob, _, _) = results[2]
+                        (sig, prob, reason, price, rel) = results[0]
+                        (s_sig, s_prob, _, _, _) = results[1]
+                        (a_sig, a_prob, _, _, _) = results[2]
                         
                         f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
                         t_sigs = {
@@ -526,7 +541,14 @@ class MulticoreMasterBot:
                         conv = (fconf * acc) * self.liquidity_mult.get(asset, 0.5)
                         
                         with signals_lock:
-                            asset_signals[asset] = {'signal': fsig, 'prob': fconf, 'conviction': conv, 'reason': treason, 'price': price}
+                            asset_signals[asset] = {
+                                'signal': fsig, 
+                                'prob': fconf, 
+                                'conviction': conv, 
+                                'reason': treason, 
+                                'price': price,
+                                'reliability': rel # Passar do Live Brain
+                            }
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
                     except Exception: pass
 
@@ -567,7 +589,8 @@ class MulticoreMasterBot:
                         sizing = kelly * s['conviction'] * avail
                         
                         if sizing >= 10 and self.balance >= sizing:
-                            dec, ar, smod = self.agent.assess_trade(asset, s['signal'], s['prob'], s['reason'])
+                            # Injected reliability and caution logic
+                            dec, ar, smod = self.agent.assess_trade(asset, s['signal'], s['prob'], s['reason'], reliability=s.get('reliability', 1.0), caution_mode=self.caution_mode)
                             if dec == "APPROVE":
                                 self.balance -= sizing
                                 self.positions[asset].append({"entry": s['price'], "signal": s['signal'], "qty": sizing/s['price'], "cost": sizing, "time": ts})
@@ -618,9 +641,18 @@ class MulticoreMasterBot:
                 if btc_price == 0.0 and "BTCBRL" in self.live_prices:
                     btc_price = self.live_prices["BTCBRL"]
                 
-                for p in self.xaut_positions:
                     eff_btc_price = btc_price if btc_price > 0 else (p.get('btc_entry_price', 350000.0))
                     self.total_equity += p['cost_btc'] * eff_btc_price * (xaut_data['ratio'] / p['ratio_entry'] if 'ratio_entry' in p else 1.0)
+
+                # Check for Caution Mode (First 30 minutes)
+                if self.initial_equity is None:
+                    self.initial_equity = self.total_equity
+                    self.check_caution_at = datetime.now() + timedelta(minutes=30)
+                elif not self.caution_mode and datetime.now() >= self.check_caution_at:
+                    if (self.total_equity / self.initial_equity) < 0.995:
+                        self.caution_mode = True
+                        self.notify_telegram(f"⚠ MODO CAUTELA ATIVADO: Perda de {1 - (self.total_equity/self.initial_equity):.2%} detectada no warmup.")
+                        self.save_state()
 
                 self.save_balance(); self.save_state()
                 self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)

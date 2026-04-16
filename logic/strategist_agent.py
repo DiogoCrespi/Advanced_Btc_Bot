@@ -97,9 +97,9 @@ class StrategistAgent:
         state['reasoning'].append(f"Decisao: {state['decision']} | Multiplicador: {mult} ({msg})")
         return state
 
-    def assess_trade(self, asset: str, signal: int, probability: float, reason: str):
+    def assess_trade(self, asset: str, signal: int, probability: float, reason: str, reliability: float = 1.0, caution_mode: bool = False):
         """
-        Avalia um trade especifico com base na probabilidade do ML e contexto macro.
+        Avalia um trade especifico com base na probabilidade do ML, confiabilidade e contexto macro.
         Retorna: (decision, reason, modifiers)
         """
         modifiers = {
@@ -108,12 +108,22 @@ class StrategistAgent:
             'sl_mult': 1.0
         }
         
-        # 1. Filtro de Probabilidade
-        if probability < 0.48:
-            return "REJECT", f"Probabilidade insuficiente ({probability:.2f})", modifiers
+        # 1. Filtro de Probabilidade Dinamico
+        threshold = 0.60 # Default elevado de 0.48 para 0.60 (Maior rigor estatistico)
+        
+        if reliability < 0.5:
+            threshold = 0.80 # Exigencia maxima para modelos em Warmup / Baixa Amostragem
+        
+        if caution_mode:
+            threshold += 0.05 # Margem extra de seguranca se o bot detectou perdas recentes
+            
+        if probability < threshold:
+            r_msg = f"Probabilidade insuficiente ({probability:.2f} < {threshold:.2f})"
+            if reliability < 0.5: r_msg += " [MODELO EXPERIMENTAL]"
+            return "REJECT", r_msg, modifiers
             
         # 2. Ajuste por Conviccao
-        if probability > 0.80:
+        if probability > 0.85:
             modifiers['size_mult'] *= 1.2
             modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta conviccao
             

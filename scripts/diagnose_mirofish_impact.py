@@ -73,19 +73,19 @@ async def run_diagnostic():
             
         df = brain.prepare_features(df)
         curr_feat = df[brain.feature_cols].values[-1]
-        sig, prob, reason = brain.predict_signal(curr_feat)
+        sig, prob, reason, rel = brain.predict_signal(curr_feat)
         
         # Avaliar se seria aprovado sem MiroFish
         # Override do radar interno do agente para o teste
         agent.radar.risk_score = risk_pure
-        decision, diag_reason, _ = agent.assess_trade(asset, sig, prob, reason)
+        decision, diag_reason, _ = agent.assess_trade(asset, sig, prob, reason, reliability=rel, caution_mode=False)
         
         status = "✅ APROVADO" if decision == "APPROVE" else "❌ REJEITADO"
         print(f"Asset: {asset:8} | Sinal: {sig:>2} | Prob: {prob:.1%} | {status} | Motivo: {diag_reason}")
 
     print("\n>>> CONCLUSAO: O MiroFish estava reduzindo o Score Macro em ~15%, o que")
     print("rebaixou o bot para o modo Bunker/Seguranca. Sem ele, os sinais Alpha acima")
-    print("teriam sido executados normalmente se a probabilidade fosse >= 48%.")
+    print("teriam sido executados normalmente se a probabilidade fosse >= 60%.")
 
 if __name__ == "__main__":
     asyncio.run(run_diagnostic())

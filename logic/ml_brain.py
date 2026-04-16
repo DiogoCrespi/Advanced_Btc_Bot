@@ -22,10 +22,13 @@ class MLBrain:
             max_depth=m_depth,
             min_samples_leaf=m_leaf,
             random_state=random_state,
-            class_weight='balanced'
+            class_weight='balanced',
+            oob_score=True  # Habilita validacao interna (Internal Reliability)
         )
         self.is_trained = False
         self.feature_cols = []
+        self.n_samples = 0
+        self.reliability_score = 0.0
 
     def prepare_features(self, df):
         """
@@ -123,12 +126,14 @@ class MLBrain:
             print("Insufficient label diversity to train ML Brain.")
             return False
 
-        if train_full:
-            # Train on EVERYTHING (for Live Bot)
-            X_aligned = X[:len(y)]
-            y_aligned = y[:len(X_aligned)]
             self.model.fit(X_aligned, y_aligned) 
-            print(f"ML Brain Trained! (Full: {len(X_aligned)} samples)")
+            self.n_samples = len(X_aligned)
+            
+            # Calculo de Confiabilidade: Amostras * OOB Score (se houver dados suficientes)
+            oob = self.model.oob_score_ if hasattr(self.model, 'oob_score_') and self.n_samples > 100 else 0.5
+            self.reliability_score = min(1.0, self.n_samples / 2000) * oob
+            
+            print(f"ML Brain Trained! (Full: {self.n_samples} samples | Reliability: {self.reliability_score:.2f})")
             self.is_trained = True
             return 1.0
         else:
@@ -142,7 +147,12 @@ class MLBrain:
                 return 0.0
                 
             self.model.fit(X_train, y_train)
+            self.n_samples = len(X_train)
             score = self.model.score(X_test, y_test)
+            
+            oob = self.model.oob_score_ if hasattr(self.model, 'oob_score_') and self.n_samples > 100 else 0.5
+            self.reliability_score = min(1.0, self.n_samples / 2000) * oob
+            
             self.is_trained = True
             return score
 
@@ -151,17 +161,17 @@ class MLBrain:
         Executa predicao com checks de seguranca para NaN/Inf.
         """
         if not self.is_trained:
-            return 0, 0.0, "Brain not trained"
+            return 0, 0.0, "Brain not trained", 0.0
             
         if feature_names is None:
             feature_names = self.feature_cols
             
         if len(current_features_row) != len(feature_names):
              # Protecao extra contra mismatch de features
-             return 0, 0.0, f"Feature mismatch: Expected {len(feature_names)}, got {len(current_features_row)}"
+             return 0, 0.0, f"Feature mismatch: Expected {len(feature_names)}, got {len(current_features_row)}", 0.0
             
         if not np.isfinite(current_features_row).all():
-            return 0, 0.0, "NaN ou Inf detectado nas features"
+            return 0, 0.0, "NaN ou Inf detectado nas features", 0.0
         
         feat_vec = current_features_row.reshape(1, -1)
         pred_class = self.model.predict(feat_vec)[0]
@@ -171,7 +181,7 @@ class MLBrain:
         _min_conf = self.dna.params["min_confidence"] if self.dna else min_confidence
 
         if max_prob < _min_conf:
-            return 0, max_prob, f"Conviccao Baixa ({max_prob:.1%})"
+            return 0, max_prob, f"Conviccao Baixa ({max_prob:.1%})", self.reliability_score
         
         # Heuristicas basicas para o 'reason'
         feats = dict(zip(feature_names, current_features_row))
@@ -184,7 +194,7 @@ class MLBrain:
             if feats.get('feat_cvd_div', 0) == -1: reason = "Divergencia CVD (Venda)"
             elif feats.get('feat_sweep_high', 0) == 1: reason = "Sweep de Topo (Venda)"
             
-        return pred_class, max_prob, reason
+        return pred_class, max_prob, reason, self.reliability_score
 
     def save_model(self, path="models/brain_rf_v1.pkl"):
         """
@@ -194,7 +204,9 @@ class MLBrain:
         data_to_save = {
             'model': self.model,
             'feature_cols': self.feature_cols,
-            'is_trained': self.is_trained
+            'is_trained': self.is_trained,
+            'n_samples': self.n_samples,
+            'reliability_score': self.reliability_score
         }
         joblib.dump(data_to_save, path)
         print(f"[SAVE] Cerebro persistido em: {path}")
@@ -211,6 +223,8 @@ class MLBrain:
             self.model = stored_data['model']
             self.feature_cols = stored_data['feature_cols']
             self.is_trained = stored_data['is_trained']
+            self.n_samples = stored_data.get('n_samples', 0)
+            self.reliability_score = stored_data.get('reliability_score', 0.0)
             print(f"[LOAD] Cerebro restaurado com sucesso de: {path} ({len(self.feature_cols)} features)")
             return True
         except Exception as e:

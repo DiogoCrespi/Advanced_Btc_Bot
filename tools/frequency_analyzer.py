@@ -48,7 +48,7 @@ def analyze_frequency(asset="BTC-USD", years=1):
         
         for i in range(len(processed)):
             feat_vec = feat_arr[i]
-            sig, prob, reason = brain.predict_signal(feat_vec, f_cols)
+            sig, prob, reason, rel = brain.predict_signal(feat_vec, f_cols)
             
             if sig != 0 and prob >= thr:
                 signals += 1

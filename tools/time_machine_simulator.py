@@ -76,7 +76,7 @@ class TimeMachineSimulator:
 
             for j in range(len(processed_test)):
                 feat_vec = feat_arr[j]
-                signal, prob, reason = self.brain.predict_signal(feat_vec, f_cols)
+                signal, prob, reason, rel = self.brain.predict_signal(feat_vec, f_cols)
                 
                 if signal != 0 and prob > self.prob_threshold:
                     self.trades += 1
