@@ -132,11 +132,15 @@ class ScannerCofreHibrido:
         except Exception as e:
             self.log_event(f"Aviso - Nao foi possivel disparar alerta Push: {e}")
         
-        nome_arquivo = 'MANDATO_DE_EXECUCAO.json'
+        # Salva o mandato na pasta data/ para manter a raiz limpa
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        nome_arquivo = os.path.join(base_dir, 'data', 'MANDATO_DE_EXECUCAO.json')
+        
         with open(nome_arquivo, 'w', encoding='utf-8') as f:
             json.dump(instrucoes, f, indent=4, ensure_ascii=False)
             
-        self.log_event(f"\n📋 Instrucoes de execucao tatica salvas no arquivo: {nome_arquivo}")
+        rel_path = os.path.relpath(nome_arquivo, os.getcwd())
+        self.log_event(f"\n📋 Instrucoes de execucao tatica salvas no arquivo: {rel_path}")
 
 if __name__ == "__main__":
     # Para rodar BRL, basta passar BTCBRL
