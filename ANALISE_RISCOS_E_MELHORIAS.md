@@ -60,6 +60,26 @@ Este documento detalha as vulnerabilidades identificadas no motor do **Advanced 
 *   **Melhoria:** Migrar para uma arquitetura de banco de dados (SQLite/Neo4j).
 *   **Status:** [CONCLUÍDO] Implementada Arquitetura de Persistência Híbrida:
     *   **Ledger (SQLite):** Banco relacional para controle financeiro estrito (Saldo, Posições Ativas, Histórico de Trades). Garante integridade via ACID.
+
+---
+
+## 🧠 Inteligência de Mercado (v3 - Microestrutura)
+
+### 1. Ingestão de Order Flow & Delta [IMPLEMENTADO]
+*   **Problema:** Indicadores técnicos tradicionais (RSI, MACD) são reativos (atrasados).
+*   **Melhoria:** Implementado o motor de **Order Flow Logic**.
+    *   **Volume Delta:** Mede a agressão líquida de compradores vs vendedores.
+    *   **CVD (Cumulative Volume Delta):** Rastreia a tendência de acumulação institucional.
+    *   **Divergência Delta:** Detecta absorção de ordens (Price Up / Delta Down).
+*   **Status:** [ATIVO] Integrado ao `DataEngine` e `MLBrain`.
+
+### 2. Order Book Imbalance (Oráculo de Execução) [ATIVO]
+*   **Problema:** Injetar Imbalance no ML sem histórico causa "envenenamento de feature" (importância zero).
+*   **Estratégia:** Removido do MLBrain e transferido para o **StrategistAgent** como uma trava determinística.
+*   **Lógica de Veto:** 
+    *   Rejeita COMPRA se houver muralha de venda (`imbalance < -0.20`).
+    *   Rejeita VENDA se houver suporte massivo de compra (`imbalance > 0.20`).
+*   **Status:** [OPERACIONAL] Atuando como gatekeeper de alta fidelidade no loop de execução.
     *   **Market Memory (Neo4j):** Grafo de conhecimento que agora registra cada trade vinculado ao contexto macro e sentimento da época. Transforma o histórico financeiro em inteligência contextual.
 
 

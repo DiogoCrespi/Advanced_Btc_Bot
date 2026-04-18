@@ -47,6 +47,7 @@ def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0, min_conf=0.45):
     try:
         df['macro_risk'] = macro_risk
         df['btc_dominance'] = btc_dom
+        
         df = brain.prepare_features(df)
         if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0, 0.0, 0.0
         
@@ -229,6 +230,9 @@ class MulticoreMasterBot:
         self.use_mirofish = False # MiroFish desativado permanentemente em favor do LocalOracle
         self.listen_key = None
         self.last_balance_sync = datetime.now()
+        self.shadow_mode = os.getenv("SHADOW_MODE", "True").lower() == "true"
+        if self.shadow_mode:
+            print("[BOOT] MODO SHADOW ATIVADO: Nenhuma ordem real sera enviada.")
         
         # Health & Monitoring
         self.last_tick = time.time()
@@ -265,13 +269,20 @@ class MulticoreMasterBot:
             if self.brains[asset].load_model(model_path):
                 print(f"[BOOT] {asset}: Modelo LIVE recuperado.")
             else:
-                print(f"[WARN] {asset}: Treinando do zero...")
+                print(f"[WARN] {asset}: Treinando v1 do zero...")
                 df = self.engine.fetch_binance_klines(asset, limit=1000)
                 if not df.empty:
                     df = self.engine.apply_indicators(df)
                     score = self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
                     self.brains[asset].save_model(model_path)
                     self.stats[asset]["oos_score"] = score
+            
+            # v3-Alpha Shadow Load
+            shadow_path = f"models/brain_rf_v3_alpha_{asset}.pkl"
+            if self.shadow_brains[asset].load_model(shadow_path):
+                print(f"[BOOT] {asset}: Modelo Shadow v3-Alpha Ativo.")
+            else:
+                print(f"[WARN] {asset}: Shadow v3-Alpha nao encontrado.")
 
         # Background tasks moved to main() to avoid "no running event loop" error
 
@@ -593,7 +604,10 @@ class MulticoreMasterBot:
                         # Identify Alfa for Ancestral vote
                         alfa_dna = self.evo_engine.population[0]
                         ancestral_brain = self.evo_brains[alfa_dna.id][asset]
-                        
+
+                        # Fetch live market microstructure (PR #60) - VETO Logic
+                        imbalance = await loop.run_in_executor(self.executor, self.engine.fetch_order_book_imbalance, asset)
+
                         # Parallelize predictions across ProcessPoolExecutor
                         tasks = [
                             loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
@@ -603,16 +617,24 @@ class MulticoreMasterBot:
                         
                         results = await asyncio.gather(*tasks)
                         (sig, prob, reason, price, rel, atr) = results[0]
-                        (s_sig, s_prob, _, _, _, _) = results[1]
+                        (s_sig, s_prob, s_reason, _, _, _) = results[1]
                         (a_sig, a_prob, _, _, _, _) = results[2]
                         
-                        f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
+                        # Logging Shadow Decision (PR #65)
+                        if s_sig != 0:
+                            print(f"[SHADOW-v3] {asset}: Sinal {s_sig} | Prob: {s_prob:.1%} | Reason: {s_reason}")
+                            self.memory.record_shadow_decision(asset, s_sig, s_prob, price, s_reason)
+
                         t_sigs = {
                             'live': {'sig': sig, 'prob': prob},
                             'shadow': {'sig': s_sig, 'prob': s_prob},
                             'ancestral': {'sig': a_sig, 'prob': a_prob}
                         }
                         fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status)
+                        
+                        # PATCH: Se o sinal for isolado e vier do v3-Alpha, preservar a razao para o StrategistAgent
+                        if "v3-Alpha" in s_reason and fsig == s_sig and "Sinal Isolado" in treason:
+                            treason = s_reason
                         
                         acc = self.stats.get('global_acc_4h', 0.5)
                         conv = (fconf * acc) * self.liquidity_mult.get(asset, 0.5)
@@ -625,7 +647,8 @@ class MulticoreMasterBot:
                                 'reason': treason, 
                                 'price': price,
                                 'reliability': rel,
-                                'atr': atr
+                                'atr': atr,
+                                'imbalance': imbalance
                             }
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
                     except Exception: pass
@@ -646,6 +669,7 @@ class MulticoreMasterBot:
                     
                     rem = []
                     for p in active:
+                        is_p_shadow = p.get('is_shadow', False)
                         pnl = (s['price']/p['entry'] - 1) * p['signal']
                         exit_r = None
                         if s['signal'] == -p['signal'] and s['prob'] >= 0.75: exit_r = "REVERSAL"
@@ -653,33 +677,29 @@ class MulticoreMasterBot:
                         
                         act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD", atr_value=s.get('atr'))
                         if exit_r or act == 'SELL':
-                            # Execucao Real/Mock via LimitExecutor
-                            qty = p['qty']
-                            side = SIDE_SELL if p['signal'] == 1 else SIDE_BUY
-                            logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
-                            
-                            # Em modo backtest ou testnet/live
-                            order = await self.limit_executor.execute_limit_order(asset, side, qty)
-                            if order:
-                                # Se preenchido, remove da lista
-                                final_price = float(order.get('price', s['price']))
-                                pnl_real = (final_price/p['entry'] - 1) * p['signal']
-                                self.balance += p['cost'] * (1 + pnl_real - 0.001) # Taxa maker menor
-                                self.notify_telegram(f"FECHADO {asset}: {exit_r or r_reason} ({pnl_real:+.2%}) @ {final_price}")
-                                
-                                # Persistencia em Banco de Dados
-                                self.ledger.update_position(asset, None) # Remove posicao
-                                self.ledger.record_completed_trade(asset, side, p['entry'], final_price, qty, pnl_real, p['cost']*pnl_real, p['time'], exit_r or r_reason)
-                                self.memory.record_trade(asset, side, qty, final_price)
-                                self.memory.record_outcome(pnl_real)
-                                self.save_balance()
+                            if self.shadow_mode or is_p_shadow:
+                                # Shadow Settlement
+                                logger.info(f"[SHADOW] Liquidando {asset} @ {s['price']} ({pnl:+.2%})")
+                                self.ledger.close_position(asset)
+                                self.ledger.record_completed_trade(asset, "SELL" if p['signal']==1 else "BUY", p['entry'], s['price'], p['qty'], pnl, p['cost']*pnl, p['time'], exit_r or r_reason, is_shadow=True)
+                                self.memory.settle_shadow_outcome(p.get('did'), s['price'], pnl)
+                                self.notify_telegram(f"[SHADOW] FECHADO {asset}: {exit_r or r_reason} ({pnl:+.2%})")
                             else:
-                                # Fallback para Market se falhar muito
-                                logger.warning(f"[EXEC] Falha no Limit Exit para {asset}. Tentando Market...")
-                                order = await self.limit_executor.execute_smart_market(asset, side, qty)
+                                # Real Execution
+                                qty = p['qty']
+                                side = SIDE_SELL if p['signal'] == 1 else SIDE_BUY
+                                logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
+                                order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                 if order:
-                                    rem.append(p) # Remove na proxima iteracao se der erro? Nao, removemos agora
-                                    self.notify_telegram(f"FECHADO {asset} (MARKET FALLBACK)")
+                                    final_price = float(order.get('price', s['price']))
+                                    pnl_real = (final_price/p['entry'] - 1) * p['signal']
+                                    self.balance += p['cost'] * (1 + pnl_real - 0.001)
+                                    self.ledger.close_position(asset)
+                                    self.ledger.record_completed_trade(asset, side, p['entry'], final_price, qty, pnl_real, p['cost']*pnl_real, p['time'], exit_r or r_reason)
+                                    self.memory.record_trade(asset, side, qty, final_price)
+                                    self.memory.record_outcome(pnl_real)
+                                    self.save_balance()
+                                    self.notify_telegram(f"FECHADO {asset}: {exit_r or r_reason} ({pnl_real:+.2%}) @ {final_price}")
                         else: rem.append(p)
                     self.positions[asset] = rem
 
@@ -693,36 +713,45 @@ class MulticoreMasterBot:
                         
                         if sizing >= 10 and self.balance >= sizing:
                             # Injected reliability and caution logic
-                            dec, ar, smod = self.agent.assess_trade(asset, s['signal'], s['prob'], s['reason'], reliability=s.get('reliability', 1.0), caution_mode=self.caution_mode)
+                            dec, ar, smod = self.agent.assess_trade(
+                                asset, s['signal'], s['prob'], s['reason'], 
+                                reliability=s.get('reliability', 1.0), 
+                                caution_mode=self.caution_mode,
+                                book_imbalance=s.get('imbalance', 0.0)
+                            )
                             if dec == "APPROVE":
                                 side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
                                 qty = await self.format_quantity_async(asset, sizing / s['price'])
                                 
-                                logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
-                                order = await self.limit_executor.execute_limit_order(asset, side, qty)
-                                
-                                if order:
-                                    actual_price = float(order.get('price', s['price']))
-                                    actual_sizing = qty * actual_price
-                                    self.balance -= actual_sizing
+                                if self.shadow_mode:
+                                    # Shadow Entry
+                                    logger.info(f"[SHADOW] Abrindo {asset} @ {s['price']}")
+                                    did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
                                     pos_data = {
-                                        "entry": actual_price, 
-                                        "signal": s['signal'], 
-                                        "qty": qty, 
-                                        "cost": actual_sizing, 
-                                        "time": ts,
-                                        "order_id": order.get('orderId')
+                                        "entry": s['price'], "signal": s['signal'], "qty": qty, 
+                                        "cost": sizing, "time": datetime.now().isoformat(), "did": did, "is_shadow": True
                                     }
                                     self.positions[asset].append(pos_data)
-                                    
-                                    # Persistencia em Banco de Dados
-                                    self.ledger.update_position(asset, pos_data)
-                                    self.memory.record_trade(asset, side, qty, actual_price)
-                                    
-                                    self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
-                                    self.save_balance(); self.save_state()
+                                    self.ledger.save_active_position(asset, pos_data, is_shadow=True)
+                                    self.notify_telegram(f"[SHADOW] ABERTO {asset}: {side} @ {s['price']}")
                                 else:
-                                    logger.warning(f"[EXEC] Falha ao abrir {asset} via Limit Order.")
+                                    # Real Entry
+                                    logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
+                                    order = await self.limit_executor.execute_limit_order(asset, side, qty)
+                                    if order:
+                                        actual_price = float(order.get('price', s['price']))
+                                        actual_sizing = qty * actual_price
+                                        self.balance -= actual_sizing
+                                        pos_data = {
+                                            "entry": actual_price, "signal": s['signal'], "qty": qty, 
+                                            "cost": actual_sizing, "time": datetime.now().isoformat(),
+                                            "order_id": order.get('orderId'), "is_shadow": False
+                                        }
+                                        self.positions[asset].append(pos_data)
+                                        self.ledger.save_active_position(asset, pos_data)
+                                        self.memory.record_trade(asset, side, qty, actual_price)
+                                        self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
+                                        self.save_balance(); self.save_state()
                             else:
                                 print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
                         else:

@@ -97,9 +97,10 @@ class StrategistAgent:
         state['reasoning'].append(f"Decisao: {state['decision']} | Multiplicador: {mult} ({msg})")
         return state
 
-    def assess_trade(self, asset: str, signal: int, probability: float, reason: str, reliability: float = 1.0, caution_mode: bool = False):
+    def assess_trade(self, asset: str, signal: int, probability: float, reason: str, reliability: float = 1.0, caution_mode: bool = False, book_imbalance: float = 0.0):
         """
-        Avalia um trade especifico com base na probabilidade do ML, confiabilidade e contexto macro.
+        Avalia um trade especifico com base na probabilidade do ML, confiabilidade,
+        contexto macro e Microestrutura de Mercado (Veto de Imbalance).
         Retorna: (decision, reason, modifiers)
         """
         modifiers = {
@@ -108,8 +109,22 @@ class StrategistAgent:
             'sl_mult': 1.0
         }
         
-        # 1. Filtro de Probabilidade Dinamico
+        # 1. Filtro de Microestrutura (Veto por Imbalance do Order Book)
+        # Se imbalance < -0.2, ha muito mais liquidez de venda (Asks) do que compra (Bids).
+        if signal == 1 and book_imbalance < -0.20:
+            return "VETO", f"Muralha de Venda Detectada (Imbalance: {book_imbalance:.2f})", modifiers
+        
+        # Se imbalance > 0.2, ha muito mais liquidez de compra (Bids) do que venda (Asks).
+        if signal == -1 and book_imbalance > 0.20:
+            return "VETO", f"Suporte de Compra Detectado (Imbalance: {book_imbalance:.2f})", modifiers
+
+        # 2. Filtro de Probabilidade Dinamico
         threshold = 0.60 # Default elevado de 0.48 para 0.60 (Maior rigor estatistico)
+        
+        # PATCH v3-Alpha: Sinais de Breakout validos tem baseline probabilistico menor (30%)
+        # mas alta assimetria. Permitimos entrada com confianca base 0.50.
+        if "v3-Alpha" in reason or "Breakout" in reason:
+            threshold = 0.50
         
         if reliability < 0.5:
             threshold = 0.80 # Exigencia maxima para modelos em Warmup / Baixa Amostragem
@@ -122,12 +137,12 @@ class StrategistAgent:
             if reliability < 0.5: r_msg += " [MODELO EXPERIMENTAL]"
             return "REJECT", r_msg, modifiers
             
-        # 2. Ajuste por Conviccao
+        # 3. Ajuste por Conviccao
         if probability > 0.85:
             modifiers['size_mult'] *= 1.2
             modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta conviccao
             
-        # 3. Filtro Macro (acesso direto ao radar)
+        # 4. Filtro Macro (acesso direto ao radar)
         if self.radar.risk_score < 0.3 and signal == 1:
             return "REJECT", "Macro Risk Off (No Longs)", modifiers
             

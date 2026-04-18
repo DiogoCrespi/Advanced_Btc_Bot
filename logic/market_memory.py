@@ -111,24 +111,52 @@ class MarketMemory:
             print(f"[MEMORY] Erro ao consultar historico: {e}")
             return 0.5
 
-    def record_outcome(self, pnl: float):
-        """
-        Vincula o resultado financeiro a ultima decisao tomada.
-        """
-        if not self.driver: return
+    def record_shadow_decision(self, asset: str, side: str, price: float, prob: float, metrics: dict):
+        """Registra uma decisao de Shadow Trading no grafo."""
+        if not self.driver: return None
         
         query = """
-        MATCH (d:Decision)
-        WHERE NOT (d)<-[:FOLLOWED]-(:Outcome)
-        WITH d ORDER BY d.timestamp DESC LIMIT 1
-        CREATE (o:Outcome {pnl: $pnl, timestamp: $ts})
+        MERGE (a:Asset {name: $asset})
+        CREATE (d:Decision {
+            type: 'SHADOW_ALPHA',
+            side: $side,
+            price: $price,
+            prob: $prob,
+            volatility: $vol,
+            trend: $trend,
+            timestamp: $ts
+        })
+        MERGE (d)-[:TARGETS]->(a)
+        RETURN elementId(d) as did
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, asset=asset, side=side, price=price, prob=prob, 
+                                   vol=metrics.get('vol', 0), trend=metrics.get('trend', 0), 
+                                   ts=datetime.now().isoformat()).single()
+                return result["did"] if result else None
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar Shadow Decision: {e}")
+            return None
+
+    def settle_shadow_outcome(self, decision_id: str, exit_price: float, pnl_pct: float):
+        """Liquida uma decisao de Shadow Trading com seu resultado real."""
+        if not self.driver or not decision_id: return
+        
+        query = """
+        MATCH (d:Decision) WHERE elementId(d) = $did
+        CREATE (o:Outcome {
+            pnl: $pnl,
+            exit_price: $exit,
+            timestamp: $ts
+        })
         MERGE (o)-[:FOLLOWED]->(d)
         """
         try:
             with self.driver.session() as session:
-                session.run(query, pnl=pnl, ts=datetime.now().isoformat())
+                session.run(query, did=decision_id, pnl=pnl_pct, exit=exit_price, ts=datetime.now().isoformat())
         except Exception as e:
-            print(f"[MEMORY] Erro ao gravar resultado: {e}")
+            print(f"[MEMORY] Erro ao liquidar Shadow Outcome: {e}")
 
     def record_trade(self, asset: str, side: str, qty: float, price: float, decision_id: Optional[str] = None):
         """

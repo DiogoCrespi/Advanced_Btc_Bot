@@ -38,7 +38,8 @@ class Ledger:
                     qty REAL,
                     cost REAL,
                     timestamp DATETIME,
-                    order_id TEXT
+                    order_id TEXT,
+                    is_shadow INTEGER DEFAULT 0
                 )
             """)
             # Table for Completed Trades
@@ -54,7 +55,8 @@ class Ledger:
                     pnl_nominal REAL,
                     entry_time DATETIME,
                     exit_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    reason TEXT
+                    reason TEXT,
+                    is_shadow INTEGER DEFAULT 0
                 )
             """)
             conn.commit()
@@ -77,23 +79,27 @@ class Ledger:
         except Exception:
             return None
 
-    def update_position(self, asset: str, data: Optional[Dict[str, Any]]):
-        """If data is None, the position is closed (deleted)."""
+    def save_active_position(self, asset: str, data: Dict[str, Any], is_shadow: bool = False):
         try:
             with sqlite3.connect(self.db_path) as conn:
-                if data is None:
-                    conn.execute("DELETE FROM active_positions WHERE asset = ?", (asset,))
-                else:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO active_positions 
-                        (asset, entry_price, signal, qty, cost, timestamp, order_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        asset, data['entry'], data['signal'], data['qty'], 
-                        data['cost'], data['time'], data.get('order_id')
-                    ))
+                conn.execute("""
+                    INSERT OR REPLACE INTO active_positions 
+                    (asset, entry_price, signal, qty, cost, timestamp, order_id, is_shadow)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    asset, data['entry'], data['signal'], data['qty'], 
+                    data['cost'], data['time'], data.get('order_id'),
+                    1 if is_shadow else 0
+                ))
         except Exception as e:
-            logger.error(f"Error updating position for {asset}: {e}")
+            logger.error(f"Error saving position for {asset}: {e}")
+
+    def close_position(self, asset: str):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM active_positions WHERE asset = ?", (asset,))
+        except Exception as e:
+            logger.error(f"Error closing position for {asset}: {e}")
 
     def load_active_positions(self) -> Dict[str, List[Dict[str, Any]]]:
         positions = {}
@@ -108,20 +114,21 @@ class Ledger:
                         "qty": r[3],
                         "cost": r[4],
                         "time": r[5],
-                        "order_id": r[6]
+                        "order_id": r[6],
+                        "is_shadow": bool(r[7])
                     }]
         except Exception as e:
             logger.error(f"Error loading positions: {e}")
         return positions
 
-    def record_completed_trade(self, asset: str, side: str, entry: float, exit: float, qty: float, pnl_pct: float, pnl_nominal: float, entry_time: str, reason: str):
+    def record_completed_trade(self, asset: str, side: str, entry: float, exit: float, qty: float, pnl_pct: float, pnl_nominal: float, entry_time: str, reason: str, is_shadow: bool = False):
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute("""
                     INSERT INTO trade_history 
-                    (asset, side, entry_price, exit_price, qty, pnl_pct, pnl_nominal, entry_time, reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (asset, side, entry, exit, qty, pnl_pct, pnl_nominal, entry_time, reason))
+                    (asset, side, entry_price, exit_price, qty, pnl_pct, pnl_nominal, entry_time, reason, is_shadow)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (asset, side, entry, exit, qty, pnl_pct, pnl_nominal, entry_time, reason, 1 if is_shadow else 0))
         except Exception as e:
             logger.error(f"Error recording completed trade: {e}")
 

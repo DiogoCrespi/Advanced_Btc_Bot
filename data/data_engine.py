@@ -1,5 +1,7 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import yfinance as yf
+import queue
+from logic.order_flow_logic import OrderFlowLogic
 import time
 import pandas as pd
 import numpy as np
@@ -237,12 +239,12 @@ class DataEngine:
             print(f"Exception fetching basis data: {e}")
             return None
 
-    def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000):
+    def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000, startTime=None):
         """
         Fetches historical klines from Binance Spot API including Taker Volume.
         Supports multiple fallback endpoints and retries on connection errors.
         """
-        cache_key = f"{symbol}_{interval}_{limit}"
+        cache_key = f"{symbol}_{interval}_{limit}_{startTime}"
         now = time.time()
         if cache_key in self._klines_cache:
             cache_time, cached_df = self._klines_cache[cache_key]
@@ -250,6 +252,8 @@ class DataEngine:
                 return cached_df.copy()
 
         params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if startTime:
+            params["startTime"] = startTime
         data = self._make_request('api', "/api/v3/klines", params=params)
         
         if data:
@@ -408,7 +412,9 @@ class DataEngine:
             tr = np.maximum(dt[h] - dt[l], 
                             np.maximum(np.abs(dt[h] - prev_c), 
                                        np.abs(dt[l] - prev_c)))
-            dt[f'feat_atr{suf}'] = tr.rolling(window=period).mean()
+            atr = tr.rolling(window=period).mean()
+            dt[f'feat_atr{suf}'] = atr
+            dt[f'feat_atr_pct{suf}'] = (atr / dt[c]) * 100
 
         # 1H Base Features
         add_macd(df, close_col, 12, 26, 9, '')
@@ -426,6 +432,15 @@ class DataEngine:
         add_bb(df, close_col, 20*24, 2, '_1d')
         add_rsi(df, close_col, 14*24, '_1d')
 
+        # Order Flow Features (PR #60 - Microestrutura)
+        of_logic = OrderFlowLogic()
+        if 'taker_buy_base_volume' in df.columns:
+            df['taker_buy_volume'] = df['taker_buy_base_volume']
+            df = of_logic.calculate_delta_features(df)
+            # Compatibilidade com nomes antigos
+            df['CVD'] = df['feat_cvd_8h']
+            df['delta'] = df['feat_delta']
+
         # Mantendo retrocompatibilidade para partes do bot que exibem 'RSI_14' logado
         df['RSI_14'] = df['feat_rsi']
         
@@ -437,6 +452,15 @@ class DataEngine:
             pass
 
         return df
+
+    def fetch_order_book_imbalance(self, symbol="BTCUSDT"):
+        """Busca o snapshot do Order Book e calcula o Imbalance de Liquidez."""
+        params = {"symbol": symbol, "limit": 50}
+        data = self._make_request('api', "/api/v3/depth", params=params)
+        if data:
+            of_logic = OrderFlowLogic()
+            return of_logic.calculate_order_book_imbalance(data.get('bids', []), data.get('asks', []))
+        return 0.0
 
 if __name__ == "__main__":
     engine = DataEngine()
