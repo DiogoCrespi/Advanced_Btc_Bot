@@ -403,10 +403,18 @@ class DataEngine:
             rs = gain / loss.replace(0, np.nan)
             dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
 
+        def add_atr(dt, h, l, c, period, suf):
+            prev_c = dt[c].shift(1)
+            tr = np.maximum(dt[h] - dt[l], 
+                            np.maximum(np.abs(dt[h] - prev_c), 
+                                       np.abs(dt[l] - prev_c)))
+            dt[f'feat_atr{suf}'] = tr.rolling(window=period).mean()
+
         # 1H Base Features
         add_macd(df, close_col, 12, 26, 9, '')
         add_bb(df, close_col, 20, 2, '')
         add_rsi(df, close_col, 14, '')
+        add_atr(df, high_col, low_col, close_col, 14, '')
 
         # 4H Emulated (Multiplicador x4)
         add_macd(df, close_col, 12*4, 26*4, 9*4, '_4h')

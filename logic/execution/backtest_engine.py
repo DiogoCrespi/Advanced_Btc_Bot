@@ -191,7 +191,7 @@ class BacktestEngine(BaseExchange):
                     self._execute_order(order, current_price, is_maker=False)
                     order['status'] = 'FILLED'
                     order['price'] = current_price
-            elif order_type == 'LIMIT':
+            elif order_type in ['LIMIT', 'LIMIT_MAKER']:
                 self.active_orders[order_id] = order
                 if side == 'BUY':
                     self._max_buy_price = max(self._max_buy_price, float(order.get('price', 0.0)))
@@ -199,6 +199,12 @@ class BacktestEngine(BaseExchange):
                     self._min_sell_price = min(self._min_sell_price, float(order.get('price', 0.0)))
 
             return order
+
+    async def get_order_status(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        with self.lock:
+            if order_id in self.active_orders:
+                return self.active_orders[order_id]
+            return {'symbol': symbol, 'orderId': order_id, 'status': 'FILLED'}
 
     async def cancel_order(self, symbol: str, order_id: str, **kwargs: Any) -> Dict[str, Any]:
         with self.lock:
@@ -215,6 +221,19 @@ class BacktestEngine(BaseExchange):
                 return {'symbol': symbol, 'price': str(price)}
             return {'symbol': symbol, 'price': '0.0'}
 
+    async def get_orderbook_ticker(self, symbol: str) -> Dict[str, Any]:
+        with self.lock:
+            if self.data is not None and len(self.data) > 0:
+                price = float(self._close_arr[self.current_index])
+                return {
+                    'symbol': symbol,
+                    'bidPrice': str(price * 0.9999),
+                    'bidQty': '1.0',
+                    'askPrice': str(price * 1.0001),
+                    'askQty': '1.0'
+                }
+            return {'symbol': symbol, 'bidPrice': '0.0', 'askPrice': '0.0'}
+
     async def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         # Mocking generic Binance symbol info
         return {
@@ -224,3 +243,9 @@ class BacktestEngine(BaseExchange):
                 {'filterType': 'PRICE_FILTER', 'tickSize': '0.01'}
             ]
         }
+
+    async def start_user_data_stream(self) -> str:
+        return "mock_listen_key"
+
+    async def keep_user_data_stream_alive(self, listen_key: str):
+        pass

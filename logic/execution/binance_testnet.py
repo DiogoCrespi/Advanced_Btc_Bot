@@ -62,11 +62,30 @@ class BinanceTestnet(BaseExchange):
             **kwargs
         )
 
+    async def get_order_status(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        return await self.client.get_order(symbol=symbol, orderId=order_id)
+
     async def cancel_order(self, symbol: str, order_id: str, **kwargs: Any) -> Dict[str, Any]:
         return await self.client.cancel_order(symbol=symbol, orderId=order_id, **kwargs)
 
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return await self.client.get_symbol_ticker(symbol=symbol)
 
+    async def get_orderbook_ticker(self, symbol: str) -> Dict[str, Any]:
+        return await self.client.get_orderbook_ticker(symbol=symbol)
+
     async def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         return await self.client.get_symbol_info(symbol)
+
+    async def start_user_data_stream(self) -> str:
+        try:
+            return await self.client.get_listen_key()
+        except Exception as e:
+            print(f"[ERROR] Falha ao obter Listen Key (Testnet): {e}")
+            return ""
+
+    async def keep_user_data_stream_alive(self, listen_key: str):
+        try:
+            await self.client.keep_alive_listen_key(listen_key)
+        except Exception as e:
+            print(f"[ERROR] Falha ao renovar Listen Key (Testnet): {e}")

@@ -21,6 +21,13 @@ class BaseExchange(ABC):
         pass
 
     @abstractmethod
+    async def get_order_status(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """
+        Gets the current status of an order.
+        """
+        pass
+
+    @abstractmethod
     async def cancel_order(self, symbol: str, order_id: str, **kwargs: Any) -> Dict[str, Any]:
         """
         Cancels an active order.
@@ -35,8 +42,29 @@ class BaseExchange(ABC):
         pass
 
     @abstractmethod
+    async def get_orderbook_ticker(self, symbol: str) -> Dict[str, Any]:
+        """
+        Gets the current best bid and ask for a symbol.
+        """
+        pass
+
+    @abstractmethod
     async def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Gets the trading rules and filters for a symbol.
+        """
+        pass
+
+    @abstractmethod
+    async def start_user_data_stream(self) -> str:
+        """
+        Starts a user data stream and returns the listen key.
+        """
+        pass
+
+    @abstractmethod
+    async def keep_user_data_stream_alive(self, listen_key: str):
+        """
+        Extends the life of a listen key.
         """
         pass

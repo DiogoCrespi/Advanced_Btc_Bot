@@ -130,6 +130,33 @@ class MarketMemory:
         except Exception as e:
             print(f"[MEMORY] Erro ao gravar resultado: {e}")
 
+    def record_trade(self, asset: str, side: str, qty: float, price: float, decision_id: Optional[str] = None):
+        """
+        Registra uma execucao de trade no grafo, vinculando-a ao ativo.
+        """
+        if not self.driver: return
+        
+        query = """
+        MERGE (a:Asset {name: $asset})
+        CREATE (t:Trade {
+            side: $side,
+            qty: $qty,
+            price: $price,
+            timestamp: $ts
+        })
+        MERGE (t)-[:EXECUTED_ON]->(a)
+        WITH t
+        MATCH (d:Decision) 
+        WHERE elementId(d) = $did OR $did IS NULL
+        WITH t, d ORDER BY d.timestamp DESC LIMIT 1
+        MERGE (t)-[:RESULT_OF]->(d)
+        """
+        try:
+            with self.driver.session() as session:
+                session.run(query, asset=asset, side=side, qty=qty, price=price, did=decision_id, ts=datetime.now().isoformat())
+        except Exception as e:
+            print(f"[MEMORY] Erro ao gravar trade no Neo4j: {e}")
+
     def record_market_state(self, symbol: str, price: float, sentiment: float):
         """
         Registra especificamente o preco e sentimento atual para uso futuro de Machine Learning.

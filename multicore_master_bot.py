@@ -35,6 +35,8 @@ from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.tribunal import ConsensusTribunal
 from logic.risk_manager import RiskManager
 from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
+from logic.execution.limit_executor import LimitExecutor
+from logic.database.ledger import Ledger
 from logic.watchdog import Watchdog
 
 load_dotenv()
@@ -46,15 +48,18 @@ def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0, min_conf=0.45):
         df['macro_risk'] = macro_risk
         df['btc_dominance'] = btc_dom
         df = brain.prepare_features(df)
-        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0, 0.0
+        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0, 0.0, 0.0
         
         current_price = float(df['close'].values[-1])
         curr_feat = df[brain.feature_cols].values[-1]
         
+        # Extrair ATR se disponivel para o RiskManager
+        atr = float(df['feat_atr'].values[-1]) if 'feat_atr' in df.columns else 0.0
+        
         signal, prob, reason, reliability = brain.predict_signal(curr_feat, min_confidence=min_conf)
-        return signal, prob, reason, current_price, reliability
+        return signal, prob, reason, current_price, reliability, atr
     except Exception as e:
-        return 0, 0.0, f"Erro Predicao: {e}", 0.0, 0.0
+        return 0, 0.0, f"Erro Predicao: {e}", 0.0, 0.0, 0.0
 
 class WebSocketSupervisor:
     def __init__(self, bot_instance):
@@ -92,19 +97,64 @@ class WebSocketSupervisor:
             streams = [f"{s.lower()}@ticker" for s in self.bot.assets]
             if "usdtbrl@ticker" not in streams: streams.append("usdtbrl@ticker")
             
+            # Se tivermos uma listen key, adicionamos o stream de usuario
+            user_socket = None
+            if self.bot.listen_key:
+                self.logger.info(f"[SUPERVISOR] Adicionando User Data Stream: {self.bot.listen_key[:10]}...")
+                user_socket = bm.user_socket()
+
             self.logger.info(f"[SUPERVISOR] Iniciando Multiplex Socket para {len(streams)} streams...")
-            async with bm.multiplex_socket(streams) as stream:
-                while True:
-                    res = await asyncio.wait_for(stream.recv(), timeout=30)
-                    if res and 'data' in res:
-                        data = res['data']; symbol = data['s']
-                        self.bot.live_prices[symbol] = float(data['c'])
-                    self._backoff_delay = 1
+            
+            # Precisamos lidar com multiplos sockets se o user_socket existir
+            if user_socket:
+                async with bm.multiplex_socket(streams) as ms, user_socket as us:
+                    while True:
+                        # Monitoramos ambos os sockets
+                        done, pending = await asyncio.wait(
+                            [ms.recv(), us.recv()],
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=30
+                        )
+                        for task in done:
+                            res = task.result()
+                            if res and 'data' in res: # Market Data
+                                data = res['data']; symbol = data['s']
+                                self.bot.live_prices[symbol] = float(data['c'])
+                            elif res and 'e' in res: # User Data Event
+                                await self._handle_user_event(res)
+                        self._backoff_delay = 1
+            else:
+                async with bm.multiplex_socket(streams) as stream:
+                    while True:
+                        res = await asyncio.wait_for(stream.recv(), timeout=30)
+                        if res and 'data' in res:
+                            data = res['data']; symbol = data['s']
+                            self.bot.live_prices[symbol] = float(data['c'])
+                        self._backoff_delay = 1
         except asyncio.TimeoutError:
             self.logger.warning("[SUPERVISOR] Timeout no WebSocket. Reiniciando...")
         except Exception as e:
             self.logger.error(f"[SUPERVISOR] Erro no socket: {e}")
             raise # Deixa o start() lidar com o backoff
+
+    async def _handle_user_event(self, event):
+        """Lida com eventos de balance e ordens vindos do WebSocket da Binance."""
+        etype = event.get('e')
+        if etype == 'outboundAccountPosition':
+            self.logger.info("[SUPERVISOR] Atualizacao de Saldo via WebSocket detectada.")
+            for balance in event.get('B', []):
+                asset = balance.get('a')
+                free = float(balance.get('f'))
+                if asset == 'BRL':
+                    self.bot.balance = free
+                elif asset == 'USDT':
+                    self.bot.usdt_balance = free
+            self.bot.save_balance()
+            self.bot.save_state()
+        elif etype == 'balanceUpdate':
+            self.logger.info(f"[SUPERVISOR] Balance Update: {event.get('a')} {event.get('d')}")
+            # Forca um sync completo na proxima iteracao
+            self.bot.last_balance_sync = datetime.now() - timedelta(hours=1)
 
 
     async def _handle_reconnection(self):
@@ -172,9 +222,13 @@ class MulticoreMasterBot:
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
         self.risk_manager = RiskManager()
+        self.ledger = Ledger()
+        self.limit_executor = LimitExecutor(self.exchange)
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        self.use_mirofish = os.getenv("USE_MIROFISH", "True").lower() in ("true", "1", "yes")
+        self.use_mirofish = False # MiroFish desativado permanentemente em favor do LocalOracle
+        self.listen_key = None
+        self.last_balance_sync = datetime.now()
         
         # Health & Monitoring
         self.last_tick = time.time()
@@ -194,8 +248,12 @@ class MulticoreMasterBot:
         self.process_executor = ProcessPoolExecutor(max_workers=6)
 
         self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
-        self.balance = self.load_balance()
-        self.positions = self.load_state()
+        # Sincronizacao de persistencia: Prioridade para o Ledger (SQLite)
+        saved_balance = self.ledger.get_last_balance()
+        self.balance = saved_balance if saved_balance is not None else self.load_balance()
+        self.positions = self.ledger.load_active_positions()
+        if not self.positions: self.positions = self.load_state()
+        
         self.total_equity = self.balance
         self.dashboard_logs = deque(maxlen=5)
         self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55) # Primeiro report em 5 min
@@ -233,7 +291,9 @@ class MulticoreMasterBot:
             self.log_queue.task_done()
 
     def async_log(self, p, c): self.log_queue.put(("append", (p, c)))
-    def save_balance(self): self.log_queue.put(("write", (self.balance_file, f"{self.balance:.2f}")))
+    def save_balance(self):
+        self.ledger.save_balance(self.balance, self.total_equity)
+        self.log_queue.put(("write", (self.balance_file, f"{self.balance:.2f}")))
     def load_balance(self):
         if os.path.exists(self.balance_file):
             try: return float(open(self.balance_file).read().strip())
@@ -267,6 +327,24 @@ class MulticoreMasterBot:
                 "reliability_stats": rel_stats
             }
         self.log_queue.put(("save_state", (self.status_file, st)))
+
+    async def sync_balances_from_exchange(self):
+        """Sincronizacao forçada via REST API para evitar deriva de saldo."""
+        if self.mode == "backtest": return
+        try:
+            brl = await self.exchange.get_balance('BRL')
+            usdt = await self.exchange.get_balance('USDT')
+            
+            # Log apenas se houver mudanca significativa (> 0.01)
+            if abs(self.balance - brl) > 0.01 or abs(self.usdt_balance - usdt) > 0.01:
+                print(f"[SYNC] Saldo Reconciliado: BRL {self.balance:.2f} -> {brl:.2f} | USDT {self.usdt_balance:.2f} -> {usdt:.2f}")
+                self.balance = brl
+                self.usdt_balance = usdt
+                self.save_balance()
+                self.save_state()
+            self.last_balance_sync = datetime.now()
+        except Exception as e:
+            print(f"[SYNC] Erro ao sincronizar saldos: {e}")
 
     def notify_telegram(self, msg, title="BTC BOT"):
         # Log para o dashboard
@@ -355,7 +433,7 @@ class MulticoreMasterBot:
         miro_conf = miro_data.get('confidence', 0.5)
         miro_score = miro_conf if miro_sent == "Bullish" else (-miro_conf if miro_sent == "Bearish" else 0)
         
-        status_oraculo = "ATIVADO" if self.use_mirofish else "DESATIVADO - Calculo Puro"
+        status_oraculo = "ATIVADO (LocalOracle)"
         miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f} [{status_oraculo}]\n"
         
         # Composite
@@ -474,25 +552,16 @@ class MulticoreMasterBot:
                         asyncio.gather(macro_task, btc_dom_task),
                         timeout=20.0
                     )
-                    if self.use_mirofish:
-                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
-                    else:
-                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 except asyncio.TimeoutError:
                     print("[WARN] Timeout buscando dados externos. Usando fallbacks...")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    if self.use_mirofish:
-                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
-                    else:
-                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                     # self.btc_dominance mantém valor anterior
                 except Exception as e:
                     print(f"[ERROR] Erro em dados externos: {e}")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
-                    if self.use_mirofish:
-                        miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
-                    else:
-                        miro_data = {"sentiment": "Neutral", "confidence": 0.0}
+                    miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 
                 m_sent = miro_data['sentiment']; m_conf = miro_data['confidence']
                 news_sent = m_conf if m_sent == "Bullish" else (-m_conf if m_sent == "Bearish" else 0)
@@ -501,6 +570,14 @@ class MulticoreMasterBot:
                 self.macro_risk = self.agent.radar.get_macro_score(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0), macro_data.get('gold_change',0), news_sent)
                 is_extreme, m_reason = self.agent.radar.is_risk_off_extreme(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0))
                 self.macro_status = {'is_extreme': is_extreme, 'reason': m_reason}
+
+                # Periodic Risk Calibration (Every hour)
+                if datetime.now().minute == 0 and datetime.now().second < 30:
+                    perf = self.ledger.get_recent_performance(limit=20)
+                    if perf['count'] >= 5:
+                        # Puxamos a media de 'oos_score' dos cerebros como acuracia esperada
+                        avg_expected = sum([v['oos_score'] for v in self.stats.values()]) / len(self.assets) if self.assets else 0.65
+                        self.risk_manager.calibrate_ego_buffer(perf['accuracy'], expected_acc=max(0.5, avg_expected))
 
                 asset_signals = {}; signals_lock = Lock()
                 async def scan_asset(asset):
@@ -525,9 +602,9 @@ class MulticoreMasterBot:
                         ]
                         
                         results = await asyncio.gather(*tasks)
-                        (sig, prob, reason, price, rel) = results[0]
-                        (s_sig, s_prob, _, _, _) = results[1]
-                        (a_sig, a_prob, _, _, _) = results[2]
+                        (sig, prob, reason, price, rel, atr) = results[0]
+                        (s_sig, s_prob, _, _, _, _) = results[1]
+                        (a_sig, a_prob, _, _, _, _) = results[2]
                         
                         f_risk = self.memory.check_failure_risk(0.01, 0, news_sent)
                         t_sigs = {
@@ -547,7 +624,8 @@ class MulticoreMasterBot:
                                 'conviction': conv, 
                                 'reason': treason, 
                                 'price': price,
-                                'reliability': rel # Passar do Live Brain
+                                'reliability': rel,
+                                'atr': atr
                             }
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
                     except Exception: pass
@@ -573,10 +651,35 @@ class MulticoreMasterBot:
                         if s['signal'] == -p['signal'] and s['prob'] >= 0.75: exit_r = "REVERSAL"
                         if is_extreme and asset != "BTCBRL": exit_r = "BUNKER_EXIT"
                         
-                        act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD")
+                        act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD", atr_value=s.get('atr'))
                         if exit_r or act == 'SELL':
-                            self.balance += p['cost'] * (1 + pnl - 0.002)
-                            self.notify_telegram(f"FECHADO {asset}: {exit_r or r_reason} ({pnl:+.2%})")
+                            # Execucao Real/Mock via LimitExecutor
+                            qty = p['qty']
+                            side = SIDE_SELL if p['signal'] == 1 else SIDE_BUY
+                            logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
+                            
+                            # Em modo backtest ou testnet/live
+                            order = await self.limit_executor.execute_limit_order(asset, side, qty)
+                            if order:
+                                # Se preenchido, remove da lista
+                                final_price = float(order.get('price', s['price']))
+                                pnl_real = (final_price/p['entry'] - 1) * p['signal']
+                                self.balance += p['cost'] * (1 + pnl_real - 0.001) # Taxa maker menor
+                                self.notify_telegram(f"FECHADO {asset}: {exit_r or r_reason} ({pnl_real:+.2%}) @ {final_price}")
+                                
+                                # Persistencia em Banco de Dados
+                                self.ledger.update_position(asset, None) # Remove posicao
+                                self.ledger.record_completed_trade(asset, side, p['entry'], final_price, qty, pnl_real, p['cost']*pnl_real, p['time'], exit_r or r_reason)
+                                self.memory.record_trade(asset, side, qty, final_price)
+                                self.memory.record_outcome(pnl_real)
+                                self.save_balance()
+                            else:
+                                # Fallback para Market se falhar muito
+                                logger.warning(f"[EXEC] Falha no Limit Exit para {asset}. Tentando Market...")
+                                order = await self.limit_executor.execute_smart_market(asset, side, qty)
+                                if order:
+                                    rem.append(p) # Remove na proxima iteracao se der erro? Nao, removemos agora
+                                    self.notify_telegram(f"FECHADO {asset} (MARKET FALLBACK)")
                         else: rem.append(p)
                     self.positions[asset] = rem
 
@@ -592,9 +695,34 @@ class MulticoreMasterBot:
                             # Injected reliability and caution logic
                             dec, ar, smod = self.agent.assess_trade(asset, s['signal'], s['prob'], s['reason'], reliability=s.get('reliability', 1.0), caution_mode=self.caution_mode)
                             if dec == "APPROVE":
-                                self.balance -= sizing
-                                self.positions[asset].append({"entry": s['price'], "signal": s['signal'], "qty": sizing/s['price'], "cost": sizing, "time": ts})
-                                self.notify_telegram(f"ABERTO {asset}: R$ {sizing:.2f}")
+                                side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
+                                qty = await self.format_quantity_async(asset, sizing / s['price'])
+                                
+                                logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
+                                order = await self.limit_executor.execute_limit_order(asset, side, qty)
+                                
+                                if order:
+                                    actual_price = float(order.get('price', s['price']))
+                                    actual_sizing = qty * actual_price
+                                    self.balance -= actual_sizing
+                                    pos_data = {
+                                        "entry": actual_price, 
+                                        "signal": s['signal'], 
+                                        "qty": qty, 
+                                        "cost": actual_sizing, 
+                                        "time": ts,
+                                        "order_id": order.get('orderId')
+                                    }
+                                    self.positions[asset].append(pos_data)
+                                    
+                                    # Persistencia em Banco de Dados
+                                    self.ledger.update_position(asset, pos_data)
+                                    self.memory.record_trade(asset, side, qty, actual_price)
+                                    
+                                    self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
+                                    self.save_balance(); self.save_state()
+                                else:
+                                    logger.warning(f"[EXEC] Falha ao abrir {asset} via Limit Order.")
                             else:
                                 print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
                         else:
@@ -654,6 +782,13 @@ class MulticoreMasterBot:
                         self.notify_telegram(f"⚠ MODO CAUTELA ATIVADO: Perda de {1 - (self.total_equity/self.initial_equity):.2%} detectada no warmup.")
                         self.save_state()
 
+                # Periodic Balance Reconciliation (Every 15 minutes)
+                if datetime.now() - self.last_balance_sync > timedelta(minutes=15):
+                    await self.sync_balances_from_exchange()
+                    # Renova Listen Key se necessario (a cada 30 min)
+                    if self.listen_key and hasattr(self.exchange, 'keep_user_data_stream_alive'):
+                        await self.exchange.keep_user_data_stream_alive(self.listen_key)
+
                 self.save_balance(); self.save_state()
                 self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)
                 
@@ -668,12 +803,18 @@ class MulticoreMasterBot:
             await asyncio.sleep(30)
 
 async def main(bot):
-    await bot.exchange.initialize() if hasattr(bot.exchange, 'initialize') else None
+    if hasattr(bot.exchange, 'initialize'):
+        await bot.exchange.initialize()
+    
+    # Inicializa Listen Key para User Data Stream (se nao for backtest)
+    if bot.mode != "backtest":
+        bot.listen_key = await bot.exchange.start_user_data_stream()
+        await bot.sync_balances_from_exchange() # Primeiro sync real
+
     supervisor = WebSocketSupervisor(bot)
     asyncio.create_task(supervisor.start())
     asyncio.create_task(bot._train_initial_evo_pop())
-    if bot.use_mirofish:
-        asyncio.create_task(bot.oracle.start_loop())
+    asyncio.create_task(bot.oracle.start_loop())
     await bot.run_async()
 
 if __name__ == "__main__":

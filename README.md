@@ -1,4 +1,4 @@
-# Advanced Multicore BTC Bot & MiroFish Integration
+# Advanced Multicore BTC Bot
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -6,7 +6,7 @@
 
 **Modular ML-Driven Trading Bot with Async Execution**
 
-The Advanced Multicore BTC Bot is an institutional-grade, high-performance algorithmic trading system designed for concurrency and predictive precision. By integrating advanced Machine Learning (Random Forest) with order-flow analysis and the **MiroFish** collective intelligence engine, it executes data-driven strategies seamlessly across multiple concurrent processes. Built entirely on asynchronous architecture (asyncio) and ProcessPools, this engine prevents UI and I/O blocking, ensuring absolute responsiveness in volatile markets.
+The Advanced Multicore BTC Bot is an institutional-grade, high-performance algorithmic trading system designed for concurrency and predictive precision. By integrating advanced Machine Learning (Random Forest) with order-flow analysis and a local LLM-based sentiment oracle, it executes data-driven strategies seamlessly across multiple concurrent processes. Built entirely on asynchronous architecture (asyncio) and ProcessPools, this engine prevents UI and I/O blocking, ensuring absolute responsiveness in volatile markets.
 
 ## 🏗 Architecture Overview
 
@@ -19,7 +19,7 @@ The system operates strictly on a three-tier concurrent architecture to isolate 
    The analytical core. Offloaded to a separate CPU process via `ProcessPoolExecutor`, the Machine Learning Brain trains and scores predictive Random Forest models using advanced feature engineering (Triple Barrier Method labeling, Momentum, Volatility) to emit directional trading signals (Alpha).
 
 3. **Execution Engine (`multicore_master_bot.py`)**:
-   The async orchestrator. Utilizing an event-driven loop (`asyncio`), it intercepts signals from the ML Predictor, evaluates risk thresholds (Risk Manager), queries the MiroFish sentiment API, and dispatches execution orders (Spot and Basis Arbitrage) without blocking main operations.
+   The async orchestrator. Utilizing an event-driven loop (`asyncio`), it intercepts signals from the ML Predictor, evaluates risk thresholds (Risk Manager), queries the **LocalOracle** (LLM-based sentiment) for macro context, and dispatches execution orders (Spot and Basis Arbitrage) without blocking main operations.
 
 ## 🚀 Quick Start
 
@@ -39,7 +39,7 @@ docker compose logs -f btc-master-bot
 ## 🗺 Project Roadmap
 
 We are continuously evolving the engine for better performance and modularity. Here is what is next:
-- **Phase 1: Sentiment Analysis Enhancements** - Deeper integration with MiroFish for real-time NLP scoring on Twitter/Reddit streams.
+- **Phase 1: Sentiment Analysis Enhancements** - Deeper integration with LocalOracle for real-time NLP scoring using local LLMs (Ollama) and high-performance APIs (Groq).
 - **Phase 2: Web Dashboard** - A full-stack React dashboard to visualize ML feature importance, equity curves, and active trades in real-time.
 - **Phase 3: Backtesting CLI** - An isolated, optimized historical backtesting sandbox using vector-based Pandas operations to simulate multi-year strategies in seconds.
 - **Phase 4: Multi-Exchange Arbitrage** - Native support for Bybit and OKX orderbook ingestion.

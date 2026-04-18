@@ -57,6 +57,7 @@ class RiskManager:
         self.trailing_stop = args.trailing_stop if args.trailing_stop is not None else float(os.getenv("RISK_TRAILING_STOP", "0.005"))
         self.max_drawdown = args.max_drawdown if args.max_drawdown is not None else float(os.getenv("RISK_MAX_DRAWDOWN", "0.05"))
         self.mode = args.risk_mode if args.risk_mode is not None else os.getenv("RISK_MODE", "conservative")
+        self.atr_multiplier = float(os.getenv("RISK_ATR_MULTIPLIER", "2.0"))
         
         # Kelly Criterion Settings
         self.kelly_fractional = 0.5 # 0.5x Kelly (Fractional) for safety
@@ -127,7 +128,7 @@ class RiskManager:
 
         return False
 
-    def check_exit_conditions(self, asset, pos_id, current_price, entry_price, signal_direction, ml_signal='HOLD'):
+    def check_exit_conditions(self, asset, pos_id, current_price, entry_price, signal_direction, ml_signal='HOLD', atr_value: Optional[float] = None):
         """
         Check hard risk limits against current position.
         Overrides ML signal if necessary.
@@ -139,6 +140,7 @@ class RiskManager:
             entry_price: Price the position was opened at
             signal_direction: 1 for long, -1 for short
             ml_signal: The signal proposed by the ML model ('BUY', 'SELL', 'HOLD')
+            atr_value: Average True Range for volatility-based stops
 
         Returns:
             str: Action to take ('SELL' if risk triggered, otherwise ml_signal)
@@ -166,12 +168,21 @@ class RiskManager:
         pnl_pct = ((current_price / entry_price) - 1) * signal_direction
         
         # 1. Check Stop Loss
-        if pnl_pct <= -self.stop_loss:
-            msg = f"[RISK] Stop-Loss triggered at {pnl_pct*100:.2f}%. Overriding ML '{ml_signal}' signal."
+        effective_stop_loss = self.stop_loss
+        if atr_value and atr_value > 0:
+            # Distancia do stop em porcentagem baseada no ATR
+            atr_stop_pct = (atr_value * self.atr_multiplier) / entry_price
+            # Usamos o maior dos dois para evitar stops curtos demais em baixa volatilidade
+            # ou longos demais em alta volatilidade (opcional: poderiamos usar apenas o ATR)
+            effective_stop_loss = max(self.stop_loss, atr_stop_pct)
+            
+        if pnl_pct <= -effective_stop_loss:
+            msg = f"[RISK] Stop-Loss triggered at {pnl_pct*100:.2f}% (Effective SL: {effective_stop_loss*100:.2f}%). Overriding ML '{ml_signal}' signal."
             console.print(msg, style="danger")
             self._log_audit(msg)
             # Remove from tracking
-            del self.peak_prices[asset][pos_id]
+            if asset in self.peak_prices and pos_id in self.peak_prices[asset]:
+                del self.peak_prices[asset][pos_id]
             return "SELL", "HARD_STOP_LOSS"
             
         # 2. Check Trailing Stop
@@ -237,18 +248,23 @@ class RiskManager:
         # Trava de seguranca (Nao alocar mais que o max_kelly_cap da banca)
         return max(0.0, min(final_f, self.max_kelly_cap))
 
-    def calibrate_ego_buffer(self, realized_acc, expected_acc):
+    def calibrate_ego_buffer(self, realized_acc, expected_acc=0.65):
         """
         Ajusta o ego_multiplier. Se expected > realized significativamente, reduz o risco.
-        O bot percebe que está 'se achando demais'.
+        O bot percebe que esta 'se achando demais' ou o mercado mudou.
         """
         gap = expected_acc - realized_acc
-        if gap > 0.15: # Se o bot acha que acerta 70% mas acerta 50%, gap = 0.20
+        if gap > 0.10: # Se o bot acha que acerta 65% mas acerta < 55%
              self.ego_multiplier = max(0.3, self.ego_multiplier - 0.1)
-             print(f"[AUTO-CORREÇÃO] Reduzindo Ego Buffer para {self.ego_multiplier:.2f} devido a excesso de confiança.")
-        elif gap < 0.05:
+             msg = f"[RISK] AUTO-CORRECAO: Reduzindo Ego Buffer para {self.ego_multiplier:.2f} (Gap: {gap:.1%})"
+             console.print(msg, style="warning")
+             self._log_audit(msg)
+        elif gap < 0.02: # Se esta performando conforme o esperado ou melhor
              self.ego_multiplier = min(1.0, self.ego_multiplier + 0.05)
-             print(f"[AUTO-CORREÇÃO] Restaurando Ego Buffer para {self.ego_multiplier:.2f} (Acurácia em linha).")
+             if self.ego_multiplier < 1.0:
+                msg = f"[RISK] AUTO-CORRECAO: Restaurando Ego Buffer para {self.ego_multiplier:.2f}"
+                console.print(msg, style="info")
+                self._log_audit(msg)
 
     def calculate_bunker_allocation(self, macro_risk: float) -> float:
         """
