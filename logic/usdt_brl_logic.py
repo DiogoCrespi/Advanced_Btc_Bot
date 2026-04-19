@@ -21,11 +21,14 @@ class UsdtBrlLogic:
         df['sma20'] = close.rolling(window=20).mean()
         df['sma50'] = close.rolling(window=50).mean()
 
-        delta = close.diff()
-        gain = delta.where(delta > 0, 0.0).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0.0)).rolling(window=14).mean()
-        rs = gain / loss.replace(0, np.nan)
-        df['rsi'] = 100 - (100 / (1 + rs))
+        delta = close.diff().values
+        gain = pd.Series(np.maximum(delta, 0.0), index=close.index).rolling(window=14).mean().values
+        loss = pd.Series(np.maximum(-delta, 0.0), index=close.index).rolling(window=14).mean().values
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = gain / loss
+            rs = np.where(loss == 0, np.nan, rs)
+            rsi = 100 - (100 / (1 + rs))
+        df['rsi'] = rsi
 
         std20 = close.rolling(window=20).std()
         df['bb_upper'] = df['sma20'] + 2 * std20

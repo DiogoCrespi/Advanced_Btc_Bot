@@ -401,11 +401,14 @@ class DataEngine:
         def add_rsi(dt, cl, l, suf):
             # BOLT OPTIMIZATION: Replaced pd.Series.where() with vectorized np.maximum
             delta = dt[cl].diff().values
-            gain = pd.Series(np.maximum(delta, 0), index=dt.index).rolling(window=l).mean()
-            loss = pd.Series(np.maximum(-delta, 0), index=dt.index).rolling(window=l).mean()
+            gain = pd.Series(np.maximum(delta, 0), index=dt.index).rolling(window=l).mean().values
+            loss = pd.Series(np.maximum(-delta, 0), index=dt.index).rolling(window=l).mean().values
             # Prevent division by zero internally via replacing zero loss with NaN initially
-            rs = gain / loss.replace(0, np.nan)
-            dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rs = gain / loss
+                rs = np.where(loss == 0, np.nan, rs)
+                rsi = 100 - (100 / (1 + rs))
+            dt[f'feat_rsi{suf}'] = rsi
 
         def add_atr(dt, h, l, c, period, suf):
             prev_c = dt[c].shift(1)
