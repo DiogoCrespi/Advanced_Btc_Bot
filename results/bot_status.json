@@ -1,0 +1,33 @@
+{
+  "balance": 9999.99,
+  "usdt_balance": 0.0,
+  "positions": {},
+  "xaut_positions": [],
+  "caution_mode": false,
+  "reliability_stats": {
+    "BTCBRL": {
+      "samples": 0,
+      "score": 0.0
+    },
+    "ETHBRL": {
+      "samples": 0,
+      "score": 0.0
+    },
+    "SOLBRL": {
+      "samples": 0,
+      "score": 0.0
+    },
+    "LINKBRL": {
+      "samples": 0,
+      "score": 0.0
+    },
+    "AVAXBRL": {
+      "samples": 0,
+      "score": 0.0
+    },
+    "RENDERBRL": {
+      "samples": 0,
+      "score": 0.0
+    }
+  }
+}
