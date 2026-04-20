@@ -403,9 +403,10 @@ class DataEngine:
             delta = dt[cl].diff().values
             gain = pd.Series(np.maximum(delta, 0), index=dt.index).rolling(window=l).mean()
             loss = pd.Series(np.maximum(-delta, 0), index=dt.index).rolling(window=l).mean()
-            # Prevent division by zero internally via replacing zero loss with NaN initially
-            rs = gain / loss.replace(0, np.nan)
-            dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
+            # Prevent division by zero internally using np.where and errstate
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rs = np.where(loss == 0, np.nan, gain / loss)
+                dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
 
         def add_atr(dt, h, l, c, period, suf):
             prev_c = dt[c].shift(1)

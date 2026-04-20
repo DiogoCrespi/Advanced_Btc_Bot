@@ -42,8 +42,9 @@ class XAUTAnalyzer:
         delta = ratio.diff().values
         gain  = pd.Series(np.maximum(delta, 0.0), index=ratio.index).rolling(window=14).mean()
         loss  = pd.Series(np.maximum(-delta, 0.0), index=ratio.index).rolling(window=14).mean()
-        rs    = gain / loss.replace(0, np.nan)
-        df['ratio_rsi'] = 100 - (100 / (1 + rs))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs    = np.where(loss == 0, np.nan, gain / loss)
+            df['ratio_rsi'] = 100 - (100 / (1 + rs))
 
         # ── Bollinger Bands (20 periodos, ±2σ) ────────────────────────────
         std20 = ratio.rolling(window=20).std()
