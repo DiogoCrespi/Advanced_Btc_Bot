@@ -119,15 +119,14 @@ class StrategistAgent:
             return "VETO", f"Suporte de Compra Detectado (Imbalance: {book_imbalance:.2f})", modifiers
 
         # 2. Filtro de Probabilidade Dinamico
-        threshold = 0.60 # Default elevado de 0.48 para 0.60 (Maior rigor estatistico)
+        threshold = 0.60 # Default elevado para Modelos Direcionais
+        is_v3 = "v3-Alpha" in reason or "Breakout" in reason
         
-        # PATCH v3-Alpha: Sinais de Breakout validos tem baseline probabilistico menor (30%)
-        # mas alta assimetria. Permitimos entrada com confianca base 0.50.
-        if "v3-Alpha" in reason or "Breakout" in reason:
-            threshold = 0.50
-        
-        if reliability < 0.5:
-            threshold = 0.80 # Exigencia maxima para modelos em Warmup / Baixa Amostragem
+        if is_v3:
+            # Isencao v3-Alpha: Alpha vem do Payoff, nao da probabilidade base.
+            threshold = 0.50 
+        elif reliability < 0.5:
+            threshold = 0.80 # Penalidade mantida para v1/v2 em warmup
         
         if caution_mode:
             threshold += 0.05 # Margem extra de seguranca se o bot detectou perdas recentes

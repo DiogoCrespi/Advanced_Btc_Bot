@@ -1,5 +1,6 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import time
+import gc
 import os
 import sys
 import orjson as json
@@ -186,7 +187,7 @@ class MulticoreMasterBot:
         elif self.mode == "testnet": self.exchange = BinanceTestnet()
         else: self.exchange = BacktestEngine(initial_balance=1000.0)
 
-        self.trade_amount = 100.0
+        self.trade_amount = 200.0
         self.fee_rate = 0.001
         self.take_profit = 0.03
         self.stop_loss = 0.015
@@ -248,8 +249,8 @@ class MulticoreMasterBot:
         self.log_thread.start()
         self.pos_lock = Lock()
         self.live_prices = {}
-        self.executor = ThreadPoolExecutor(max_workers=6)
-        self.process_executor = ProcessPoolExecutor(max_workers=6)
+        self.executor = ThreadPoolExecutor(max_workers=10)
+        self.process_executor = ProcessPoolExecutor(max_workers=2)
 
         self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
         # Sincronizacao de persistencia: Prioridade para o Ledger (SQLite)
@@ -652,6 +653,12 @@ class MulticoreMasterBot:
                             }
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
                     except Exception: pass
+                    finally:
+                        # Limpeza de Memoria (Anti-Leak)
+                        if 'df' in locals(): del df
+                        if 'tasks' in locals(): del tasks
+                        if 'results' in locals(): del results
+                        gc.collect()
 
                 await asyncio.gather(*(scan_asset(a) for a in self.assets))
                 

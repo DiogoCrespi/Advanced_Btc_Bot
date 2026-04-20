@@ -61,7 +61,7 @@ class RiskManager:
         
         # Kelly Criterion Settings
         self.kelly_fractional = 0.5 # 0.5x Kelly (Fractional) for safety
-        self.max_kelly_cap = 0.10 # Max 10% of equity per trade regardless of Kelly
+        self.max_kelly_cap = 0.20 # Max 20% of equity per trade (Permite R$ 200 em banca de R$ 1000)
         self.ego_multiplier = 1.0 # 1.0 = full trust, 0.3 = extreme doubt
         
         # Bunker State (Protecao Ativa)
