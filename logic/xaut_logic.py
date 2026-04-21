@@ -39,11 +39,16 @@ class XAUTAnalyzer:
         df['ratio_sma50'] = ratio.rolling(window=50, min_periods=50).mean()
 
         # ── RSI do Ratio (14 periodos) ────────────────────────────────────
-        delta = ratio.diff().values
-        gain  = pd.Series(np.maximum(delta, 0.0), index=ratio.index).rolling(window=14).mean()
-        loss  = pd.Series(np.maximum(-delta, 0.0), index=ratio.index).rolling(window=14).mean()
-        rs    = gain / loss.replace(0, np.nan)
-        df['ratio_rsi'] = 100 - (100 / (1 + rs))
+        # BOLT Fix: Replace slow Pandas scalar methods (.replace) with NumPy vectorized operations
+        d_vals = ratio.diff().fillna(0.0).values
+        gain_s = pd.Series(np.maximum(d_vals, 0.0), index=ratio.index).rolling(window=14).mean().values
+        loss_s = pd.Series(np.maximum(-d_vals, 0.0), index=ratio.index).rolling(window=14).mean().values
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = gain_s / loss_s
+            rsi = np.where(loss_s == 0, np.nan, 100 - (100 / (1 + rs)))
+
+        df['ratio_rsi'] = rsi
 
         # ── Bollinger Bands (20 periodos, ±2σ) ────────────────────────────
         std20 = ratio.rolling(window=20).std()
