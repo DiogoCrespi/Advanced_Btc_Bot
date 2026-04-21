@@ -30,8 +30,9 @@ Evoluir o motor de ML para capturar *Alpha* institucional através de Order Flow
 
 ## 🚦 Estado Atual: QUARENTENA 100% OPERACIONAL
 - O bot está rodando em **Shadow Mode** no ambiente Linux.
-- Os modelos `v3_alpha` estão ativos para BTC, ETH e SOL.
-- **Code Freeze:** A camada v2 (produção) está selada e protegida.
+- **Alpha Tier (v3-Alpha Shadow):** Modelos ativos para **BTCBRL, ETHBRL, SOLBRL, LINKBRL, AVAXBRL, RENDERBRL**.
+- **Bunker Tier (Production v2):** Lógica de **USDT/BRL** e **XAUT** (Safe Harbor) operando em modo real/congelado.
+- **Code Freeze:** A camada v2 (produção financeira) está selada e protegida.
 
 ## ⏭️ Próximos Passos (Pós-24h)
 1.  **Auditoria:** Executar `python3 scripts/audit_v3_shadow.py` para extrair métricas de precisão real do Neo4j.

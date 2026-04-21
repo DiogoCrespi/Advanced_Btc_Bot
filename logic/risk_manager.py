@@ -1,6 +1,7 @@
 import os
 import argparse
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.theme import Theme
