@@ -400,12 +400,16 @@ class DataEngine:
 
         def add_rsi(dt, cl, l, suf):
             # BOLT OPTIMIZATION: Replaced pd.Series.where() with vectorized np.maximum
-            delta = dt[cl].diff().values
-            gain = pd.Series(np.maximum(delta, 0), index=dt.index).rolling(window=l).mean()
-            loss = pd.Series(np.maximum(-delta, 0), index=dt.index).rolling(window=l).mean()
-            # Prevent division by zero internally via replacing zero loss with NaN initially
-            rs = gain / loss.replace(0, np.nan)
-            dt[f'feat_rsi{suf}'] = 100 - (100 / (1 + rs))
+            # BOLT OPTIMIZATION 2: Replaced slow Pandas scalar methods (.replace) with NumPy vectorized operations
+            d_vals = dt[cl].diff().fillna(0.0).values
+            gain_s = pd.Series(np.maximum(d_vals, 0.0), index=dt.index).rolling(window=l).mean().values
+            loss_s = pd.Series(np.maximum(-d_vals, 0.0), index=dt.index).rolling(window=l).mean().values
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rs = gain_s / loss_s
+                rsi = np.where(loss_s == 0, np.nan, 100 - (100 / (1 + rs)))
+
+            dt[f'feat_rsi{suf}'] = rsi
 
         def add_atr(dt, h, l, c, period, suf):
             prev_c = dt[c].shift(1)

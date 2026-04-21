@@ -21,11 +21,16 @@ class UsdtBrlLogic:
         df['sma20'] = close.rolling(window=20).mean()
         df['sma50'] = close.rolling(window=50).mean()
 
-        delta = close.diff()
-        gain = delta.where(delta > 0, 0.0).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0.0)).rolling(window=14).mean()
-        rs = gain / loss.replace(0, np.nan)
-        df['rsi'] = 100 - (100 / (1 + rs))
+        # BOLT Fix: Replace slow Pandas scalar methods (.where, .replace) with NumPy vectorized operations
+        d_vals = close.diff().fillna(0.0).values
+        gain_s = pd.Series(np.maximum(d_vals, 0.0), index=close.index).rolling(window=14).mean().values
+        loss_s = pd.Series(np.maximum(-d_vals, 0.0), index=close.index).rolling(window=14).mean().values
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = gain_s / loss_s
+            rsi = np.where(loss_s == 0, np.nan, 100 - (100 / (1 + rs)))
+
+        df['rsi'] = rsi
 
         std20 = close.rolling(window=20).std()
         df['bb_upper'] = df['sma20'] + 2 * std20
