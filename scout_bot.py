@@ -175,7 +175,7 @@ def orjson_default(obj):
     if isinstance(obj, np.ndarray): return obj.tolist()
     raise TypeError
 
-class MulticoreMasterBot:
+class ScoutBot:
     def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL", "LINKBRL", "AVAXBRL", "RENDERBRL"], mode="backtest"):
         self.mode = mode
         self.live_mode = (mode == "live")
@@ -189,7 +189,7 @@ class MulticoreMasterBot:
         elif self.mode == "testnet": self.exchange = BinanceTestnet()
         else: self.exchange = BacktestEngine(initial_balance=1000.0)
 
-        self.trade_amount = 200.0
+        self.trade_amount = 10.0
         self.fee_rate = 0.001
         self.take_profit = 0.03
         self.stop_loss = 0.015
@@ -229,7 +229,7 @@ class MulticoreMasterBot:
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
         self.risk_manager = RiskManager()
-        self.ledger = Ledger()
+        self.ledger = Ledger(db_path='results/scout_ledger.db')
         self.limit_executor = LimitExecutor(self.exchange)
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -614,16 +614,7 @@ class MulticoreMasterBot:
                         # Fetch live market microstructure (PR #60) - VETO Logic
                         imbalance = await loop.run_in_executor(self.executor, self.engine.fetch_order_book_imbalance, asset)
 
-                        # IPC Broadcast para o Batedor (Scout)
-                        try:
-                            last_row = df.iloc[-1].to_dict()
-                            # Converter timestamps etc
-                            for k, v in last_row.items():
-                                if "Timestamp" in str(type(v)): last_row[k] = v.isoformat()
-                            payload = json.dumps({"asset": asset, "features": last_row, "imbalance": imbalance})
-                            self.udp_sock.sendto(payload.encode('utf-8'), ("127.0.0.1", 5555))
-                        except Exception as e:
-                            print(f"[IPC ERROR] {e}")
+                        
     
 
                         # Parallelize predictions across ProcessPoolExecutor
@@ -874,5 +865,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='backtest')
     args = parser.parse_args()
-    bot = MulticoreMasterBot(mode=args.mode)
+    bot = ScoutBot(mode=args.mode)
     asyncio.run(main(bot))
