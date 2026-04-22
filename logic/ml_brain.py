@@ -15,22 +15,26 @@ class MLBrain:
         self.dna = dna
         # Se houver DNA, os genes sobrepõem os padrões
         n_est = dna.params["n_estimators"] if dna else n_estimators
-        m_depth = dna.params["max_depth"] if dna else 11 # v3-Alpha Target
+        self.max_depth = dna.params["max_depth"] if dna else 11 # v3-Alpha Target
         m_leaf = dna.params["min_samples_leaf"] if dna else 40 # v3-Alpha Target
+        self.n_jobs = dna.params.get("n_jobs", 1) if dna else 1 # Default 1 para evitar overhead em herança
 
         self.model = RandomForestClassifier(
             n_estimators=n_est,
-            max_depth=m_depth,
+            max_depth=self.max_depth,
             min_samples_leaf=m_leaf,
             random_state=random_state,
-            class_weight='balanced_subsample', # v3-Alpha: Punição severa para falsos positivos
-            oob_score=True
+            class_weight='balanced_subsample', # v3-Alpha: Punicao severa para falsos positivos
+            oob_score=True,
+            n_jobs=self.n_jobs
         )
         self.is_trained = False
         self.feature_cols = []
         self.n_samples = 0
         self.reliability_score = 0.0
         self.atr_threshold = 0.0 # Rolling Threshold v3
+        self.status = "OBSERVATION" # Status inicial: OBSERVATION ou LIVE
+
 
     def prepare_features(self, df):
         """
@@ -39,14 +43,25 @@ class MLBrain:
         """
         df = df.copy()
         
-        # 1. Metadados Macro
+        # 1. Macro & Dominance
         df['feat_macro_risk'] = df.get('macro_risk', 0.5)
         df['feat_btc_dominance'] = df.get('btc_dominance', 50.0)
         
-        # 2. Order Flow (PR #60/61)
+        # 2. Codificacao Temporal Ciclica (Sin/Cos)
+        try:
+            from logic.features import TemporalEncoder
+            df = TemporalEncoder.apply(df)
+        except ImportError:
+            pass
+
+        # 3. Order Flow (PR #60/61 + Local Div)
         if 'feat_cvd_4h' not in df.columns: df['feat_cvd_4h'] = 0.0
         if 'feat_cvd_8h' not in df.columns: df['feat_cvd_8h'] = 0.0
         if 'feat_delta' not in df.columns: df['feat_delta'] = 0.0
+        if 'cvd_div' in df.columns: df['feat_cvd_div'] = df['cvd_div']
+        if 'sweep_high' in df.columns: df['feat_sweep_high'] = df['sweep_high']
+        if 'sweep_low' in df.columns: df['feat_sweep_low'] = df['sweep_low']
+
         
         # 3. Gating de Volatilidade (Rolling ATR Percentile)
         # Calculamos o threshold baseados nas ultimas 1000 amostras do dataframe fornecido
@@ -157,13 +172,34 @@ class MLBrain:
             
         self.model.fit(X_train, y_train)
         self.n_samples = len(X_train)
+        score = self.model.score(X_test, y_test) if len(X_test) > 0 else 0.0
         
         # Score OOB para robustez
         oob = self.model.oob_score_ if hasattr(self.model, 'oob_score_') and self.n_samples > 100 else 0.5
         self.reliability_score = min(1.0, self.n_samples / 5000) * oob
         
+        # Audit Report Log
+        diff = score - oob
+        audit_msg = f"[AUDIT] Samples: {self.n_samples} | Accuracy: {score:.2f} | OOB: {oob:.2f} | Diff: {diff:.2f}"
+        if diff > 0.15: audit_msg += " -> ⚠️ OVERFITTING ALERT"
+        print(audit_msg)
+        
+        # Um modelo e considerado LIVE apenas se tiver maturidade minima
+        self.status = "LIVE" if self.n_samples >= 2000 else "OBSERVATION"
+        
         self.is_trained = True
-        return oob if len(X_test) == 0 else self.model.score(X_test, y_test)
+        return score if len(X_test) > 0 else oob
+
+
+    def get_feature_importances(self):
+        """
+        Retorna a importancia das features ordenada.
+        Utilizado para auditar se o TemporalEncoder (Sin/Cos) esta dominando o modelo.
+        """
+        if not self.is_trained: return {}
+        importances = self.model.feature_importances_
+        feat_map = sorted(zip(self.feature_cols, importances), key=lambda x: x[1], reverse=True)
+        return dict(feat_map)
 
     def predict_signal(self, current_features_row, feature_names=None, min_confidence=0.55):
         """
@@ -208,7 +244,10 @@ class MLBrain:
             'feature_cols': self.feature_cols,
             'is_trained': self.is_trained,
             'reliability_score': self.reliability_score,
-            'atr_threshold': self.atr_threshold
+            'atr_threshold': self.atr_threshold,
+            'n_samples': self.n_samples,
+            'status': self.status
+
         }
         joblib.dump(data_to_save, path)
 
@@ -221,5 +260,9 @@ class MLBrain:
             self.is_trained = stored_data['is_trained']
             self.reliability_score = stored_data.get('reliability_score', 0.0)
             self.atr_threshold = stored_data.get('atr_threshold', 0.0)
+            self.n_samples = stored_data.get('n_samples', 0)
+            self.status = stored_data.get('status', "OBSERVATION")
+            print(f"[LOAD] Cerebro restaurado com sucesso de: {path} ({len(self.feature_cols)} features | Status: {self.status})")
+
             return True
         except: return False

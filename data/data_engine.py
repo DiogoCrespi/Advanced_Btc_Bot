@@ -239,21 +239,26 @@ class DataEngine:
             print(f"Exception fetching basis data: {e}")
             return None
 
-    def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000, startTime=None):
+    def fetch_binance_klines(self, symbol="BTCUSDT", interval="1h", limit=1000, startTime=None, endTime=None):
         """
         Fetches historical klines from Binance Spot API including Taker Volume.
-        Supports multiple fallback endpoints and retries on connection errors.
+        Supports pagination via startTime and endTime.
         """
-        cache_key = f"{symbol}_{interval}_{limit}_{startTime}"
-        now = time.time()
-        if cache_key in self._klines_cache:
-            cache_time, cached_df = self._klines_cache[cache_key]
-            if now - cache_time < 15:
-                return cached_df.copy()
+        # Cache only for the default recent lookback to avoid memory bloat with historical data
+        is_cacheable = startTime is None and endTime is None and limit <= 1000
+        cache_key = f"{symbol}_{interval}_{limit}"
+        
+        if is_cacheable:
+            now = time.time()
+            if cache_key in self._klines_cache:
+                cache_time, cached_df = self._klines_cache[cache_key]
+                if now - cache_time < 15:
+                    return cached_df.copy()
 
         params = {"symbol": symbol, "interval": interval, "limit": limit}
-        if startTime:
-            params["startTime"] = startTime
+        if startTime: params["startTime"] = int(startTime)
+        if endTime: params["endTime"] = int(endTime)
+        
         data = self._make_request('api', "/api/v3/klines", params=params)
         
         if data:
@@ -275,14 +280,82 @@ class DataEngine:
                 df['buy_vol'] = df['taker_buy_base_volume']
                 df['sell_vol'] = df['volume'] - df['buy_vol']
                 df['delta'] = df['buy_vol'] - df['sell_vol']
-                df['CVD'] = df['delta'].cumsum()
                 
-                self._klines_cache[cache_key] = (time.time(), df)
+                if is_cacheable:
+                    df['CVD'] = df['delta'].cumsum() # CVD needs full history to be meaningful
+                    self._klines_cache[cache_key] = (time.time(), df)
+                
                 return df.copy()
             except Exception as e:
                 print(f"Error processing Binance Klines for {symbol}: {e}")
         
         return pd.DataFrame()
+
+    def fetch_historical_backfill(self, symbol="BTCUSDT", interval="1h", target_samples=10000):
+        """
+        Paginates backwards to fetch the requested number of samples.
+        """
+        print(f"[DATA] [BACKFILL] Iniciando backfill de {target_samples} amostras para {symbol}...")
+        all_klines = []
+        last_startTime = None
+        
+        # O teto maximo e 1000 por chamada. Paginamos ate atingir o alvo.
+        batch_size = 1000
+        needed_batches = (target_samples // batch_size) + 1
+        
+        for i in range(needed_batches):
+            # Para paginar para tras, precisamos do endTime. 
+            # Contudo, a API da Binance funciona melhor paginando para frente se soubermos o inicio,
+            # ou podemos simplesmente ir buscando o "presente" e usar o tempo da primeira kline para a proxima busca retroativa.
+            
+            params = {"symbol": symbol, "interval": interval, "limit": batch_size}
+            if last_startTime:
+                # Vamos buscar o bloco ANTERIOR ao que ja temos
+                # endTime e exclusivo.
+                params["endTime"] = last_startTime - 1
+            
+            data = self._make_request('api', "/api/v3/klines", params=params)
+            if not data or not isinstance(data, list):
+                break
+                
+            df_batch = pd.DataFrame(data, columns=[
+                'open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'count', 
+                'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+            ])
+            
+            all_klines.append(df_batch)
+            last_startTime = int(df_batch['open_time'].values[0])
+            
+            collected = sum(len(b) for b in all_klines)
+            print(f"   > Coletado: {collected}/{target_samples}...")
+            
+            if collected >= target_samples:
+                break
+                
+            # Rate limit safety
+            time.sleep(0.5)
+
+        if not all_klines:
+            return pd.DataFrame()
+            
+        df = pd.concat(all_klines).sort_values('open_time').drop_duplicates('open_time')
+        
+        # Convert to numeric
+        cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
+        df[cols] = df[cols].apply(pd.to_numeric)
+        
+        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+        df.set_index('open_time', inplace=True)
+        
+        # Recalcula CVD para o set completo
+        df['buy_vol'] = df['taker_buy_base_volume']
+        df['sell_vol'] = df['volume'] - df['buy_vol']
+        df['delta'] = df['buy_vol'] - df['sell_vol']
+        df['CVD'] = df['delta'].cumsum()
+        
+        print(f"[SUCCESS] [DATA] Backfill concluido: {len(df)} amostras.")
+        return df
 
 
     def fetch_xaut_ratio(self, limit: int = 300) -> pd.DataFrame:

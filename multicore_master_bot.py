@@ -35,6 +35,7 @@ from logic.usdt_brl_logic import UsdtBrlLogic
 from logic.local_oracle import LocalOracle
 from logic.coingecko_client import CoinGeckoClient
 from logic.evolutionary_engine import EvolutionaryEngine, DNA
+from logic.feature_store import FeatureStore
 from logic.tribunal import ConsensusTribunal
 from logic.risk_manager import RiskManager
 from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
@@ -240,6 +241,9 @@ class MulticoreMasterBot:
         if self.shadow_mode:
             print("[BOOT] MODO SHADOW ATIVADO: Nenhuma ordem real sera enviada.")
         
+        # Persistence & Maturity
+        self.feature_store = FeatureStore()
+        
         # Health & Monitoring
         self.last_tick = time.time()
         self.watchdog = Watchdog(self)
@@ -268,27 +272,56 @@ class MulticoreMasterBot:
         self.dashboard_logs = deque(maxlen=5)
         self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55) # Primeiro report em 5 min
         
-        print("[INIT] Booting Multicore Brains...")
+        print(f"[INIT] Booting Multicore Brains ({self.mode})...")
         os.makedirs("models", exist_ok=True)
+        
+        # Warmup Buffer
+        history_df = self.feature_store.load_history()
+        
         for asset in assets:
+            # Prioriza o modelo v2_massive para BTCUSDT se existir
+            massive_path = f"models/{asset.lower()}_brain_v2_massive.pkl"
             model_path = f"models/{asset.lower()}_brain_v1.pkl"
-            if self.brains[asset].load_model(model_path):
-                print(f"[BOOT] {asset}: Modelo LIVE recuperado.")
-            else:
-                print(f"[WARN] {asset}: Treinando v1 do zero...")
-                df = self.engine.fetch_binance_klines(asset, limit=1000)
-                if not df.empty:
-                    df = self.engine.apply_indicators(df)
-                    score = self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
-                    self.brains[asset].save_model(model_path)
-                    self.stats[asset]["oos_score"] = score
             
-            # v3-Alpha Shadow Load
+            brain = self.brains[asset]
+            
+            # 1. Carregar Modelo (Prioriza Massive -> V1)
+            if os.path.exists(massive_path):
+                print(f"[BOOT] {asset}: Carregando Modelo GOLD STANDARD (v2_massive)...")
+                brain.load_model(massive_path)
+            else:
+                print(f"[BOOT] {asset}: Carregando Modelo v1...")
+                brain.load_model(model_path)
+            
+            # 2. Maturidade dos Dados & Backfill
+            asset_history = history_df[history_df['symbol'] == asset] if not history_df.empty and 'symbol' in history_df.columns else pd.DataFrame()
+            
+            if len(asset_history) < 10000 and self.mode != "backtest":
+                print(f"[BOOT] {asset}: Dados insuficientes ({len(asset_history)}). Iniciando Backfill...")
+                new_data = self.engine.fetch_historical_backfill(asset, target_samples=10000)
+                if not new_data.empty:
+                    new_data['symbol'] = asset
+                    self.feature_store.append_new_data(new_data)
+                    asset_history = new_data
+            
+            # 3. Treinamento/Ajuste (se necessario)
+            if not brain.is_trained or brain.n_samples < 2000:
+                print(f"[BOOT] {asset}: Treinando com dataset maturado ({len(asset_history)} amostras)...")
+                if not asset_history.empty:
+                    asset_history = self.engine.apply_indicators(asset_history)
+                    score = brain.train(asset_history, train_full=True, tp=self.take_profit, sl=self.stop_loss)
+                    brain.save_model(model_path)
+                    self.stats[asset]["oos_score"] = score
+            else:
+                print(f"[BOOT] {asset}: Modelo LIVE pronto (Samples: {brain.n_samples} | Status: {brain.status})")
+
+            # 4. v3-Alpha Shadow Load
             shadow_path = f"models/brain_rf_v3_alpha_{asset}.pkl"
             if self.shadow_brains[asset].load_model(shadow_path):
                 print(f"[BOOT] {asset}: Modelo Shadow v3-Alpha Ativo.")
             else:
                 print(f"[WARN] {asset}: Shadow v3-Alpha nao encontrado.")
+
 
         # Background tasks moved to main() to avoid "no running event loop" error
 
@@ -666,8 +699,16 @@ class MulticoreMasterBot:
                                 'price': price,
                                 'reliability': rel,
                                 'atr': atr,
-                                'imbalance': imbalance
+                                'imbalance': imbalance,
+                                'status': live_brain.status
+
                             }
+                            # Sync incrementally to feature store
+                            if iter_count % 10 == 0:
+                                last_row = df.tail(1).copy()
+                                last_row['symbol'] = asset
+                                self.feature_store.append_new_data(last_row)
+                                
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
                     except Exception: pass
                     finally:
@@ -737,19 +778,26 @@ class MulticoreMasterBot:
                         
                         if sizing >= 10 and self.balance >= sizing:
                             # Injected reliability and caution logic
+                            # 4. Hybrid Entry Logic (Shadow Mode vs Real Entry)
                             dec, ar, smod = self.agent.assess_trade(
                                 asset, s['signal'], s['prob'], s['reason'], 
                                 reliability=s.get('reliability', 1.0), 
                                 caution_mode=self.caution_mode,
                                 book_imbalance=s.get('imbalance', 0.0)
                             )
+                            
+                            # Per-model shadow (Observation) vs Bot-wide shadow mode
+                            model_shadow = s.get('status') == "OBSERVATION"
+                            
                             if dec == "APPROVE":
-                                side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
-                                qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                
-                                if self.shadow_mode:
-                                    # Shadow Entry
-                                    logger.info(f"[SHADOW] Abrindo {asset} @ {s['price']}")
+                                if model_shadow:
+                                    print(f"👻 [SHADOW-OBS] {asset}: Entrada simulada (Maturidade Insuficiente).")
+                                    self.memory.record_context_and_decision(news_sent, self.macro_risk, f"SHADOW_ALPHA_{asset}_{s['signal']}")
+                                elif self.shadow_mode:
+                                    # Global Shadow Mode
+                                    side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
+                                    qty = await self.format_quantity_async(asset, sizing / s['price'])
+                                    logger.info(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']}")
                                     did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
                                     pos_data = {
                                         "entry": s['price'], "signal": s['signal'], "qty": qty, 
@@ -760,6 +808,8 @@ class MulticoreMasterBot:
                                     self.notify_telegram(f"[SHADOW] ABERTO {asset}: {side} @ {s['price']}")
                                 else:
                                     # Real Entry
+                                    side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
+                                    qty = await self.format_quantity_async(asset, sizing / s['price'])
                                     logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
                                     order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                     if order:
@@ -776,6 +826,7 @@ class MulticoreMasterBot:
                                         self.memory.record_trade(asset, side, qty, actual_price)
                                         self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
                                         self.save_balance(); self.save_state()
+
                             else:
                                 print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
                         else:
