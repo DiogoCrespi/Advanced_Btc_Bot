@@ -1,0 +1,18 @@
+{
+  "report_id": "report_live_bot",
+  "simulation_id": "live_bot_sim",
+  "graph_id": "live_graph",
+  "simulation_requirement": "Analyze market sentiment and news for automated trading signals.",
+  "status": "completed",
+  "outline": {
+    "title": "Overall Sentiment Report",
+    "summary": "Indicators show stable growth.",
+    "sections": [
+      {
+        "title": "Live Market Sentiment",
+        "content": "The current indicators reflect a bullish trend."
+      }
+    ]
+  },
+  "markdown_content": "# Live Market Analysis\n\n- **Sentiment**: Bullish\n- **Details**: Strong buy signals based on news volume.\n- **Confidence**: 0.85"
+}

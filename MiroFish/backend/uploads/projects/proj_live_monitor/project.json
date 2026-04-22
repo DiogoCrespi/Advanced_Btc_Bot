@@ -1,0 +1,7 @@
+{
+  "project_id": "proj_live_monitor",
+  "name": "Live Market Monitor",
+  "description": "Automated sentiment monitoring for BTC bot.",
+  "simulation_requirement": "Analyze market sentiment and news for automated trading signals.",
+  "graph_id": "live_graph"
+}
