@@ -7,11 +7,20 @@ from multicore_master_bot import MulticoreMasterBot, WebSocketSupervisor
 @pytest.fixture
 def mock_bot():
     """Cria uma instancia do bot com componentes mockados."""
+    import pandas as pd
     with patch('multicore_master_bot.DataEngine'), \
-         patch('multicore_master_bot.MLBrain'), \
+         patch('multicore_master_bot.MLBrain') as mock_ml, \
          patch('multicore_master_bot.BinanceLive'), \
          patch('multicore_master_bot.LocalOracle'), \
+         patch('multicore_master_bot.FeatureStore') as mock_fs, \
+         patch('multicore_master_bot.Ledger'), \
          patch('multicore_master_bot.Watchdog'):
+        
+        mock_fs.return_value.load_history.return_value = pd.DataFrame()
+        # Configura o mock do MLBrain para evitar blocos de treinamento
+        mock_ml.return_value.is_trained = True
+        mock_ml.return_value.n_samples = 5000
+        
         bot = MulticoreMasterBot(mode="live")
         bot.exchange = AsyncMock()
         bot.save_balance = MagicMock()
@@ -22,7 +31,9 @@ def mock_bot():
 async def test_sync_balances_from_exchange(mock_bot):
     """Testa se a sincronizacao via REST API atualiza os saldos corretamente."""
     # Setup: mock retorno da exchange
-    mock_bot.exchange.get_balance.side_effect = lambda asset: 5000.0 if asset == 'BRL' else 100.0
+    async def mock_get_balance(asset):
+        return 5000.0 if asset == 'BRL' else 100.0
+    mock_bot.exchange.get_balance.side_effect = mock_get_balance
     
     # Valores iniciais diferentes
     mock_bot.balance = 1000.0

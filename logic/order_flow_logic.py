@@ -60,3 +60,32 @@ class OrderFlowLogic:
             
         imbalance = (sum_bid_qty - sum_ask_qty) / total_vol
         return imbalance
+
+    def calculate_avwap(self, df, anchor_time):
+        """
+        Calcula o Anchored VWAP a partir de um ponto no tempo.
+        Formula: Sum(TypicalPrice * Volume) / Sum(Volume)
+        """
+        if df.empty:
+            return pd.Series(dtype=float)
+            
+        df = df.copy()
+        df['tp'] = (df['high'] + df['low'] + df['close']) / 3
+        df['pv'] = df['tp'] * df['volume']
+        
+        # Mascara para dados apos a ancora (inclusive)
+        mask = df.index >= anchor_time
+        
+        # Inicializa a serie de resultado com NaNs
+        avwap = pd.Series(index=df.index, data=np.nan, dtype=float)
+        
+        if mask.any():
+            df_subset = df.loc[mask]
+            cum_pv = df_subset['pv'].cumsum()
+            cum_vol = df_subset['volume'].cumsum()
+            
+            # Evita divisao por zero
+            avwap_values = np.where(cum_vol == 0, np.nan, cum_pv / cum_vol)
+            avwap.loc[mask] = avwap_values
+            
+        return avwap

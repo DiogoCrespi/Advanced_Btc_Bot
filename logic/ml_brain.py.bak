@@ -143,11 +143,10 @@ class MLBrain:
         
         # v3-Alpha: Gating no Treino (Opcional, mas Sandbox provou ser superior)
         if 'feat_atr_pct' in data.columns:
-            self.atr_threshold = data['feat_atr_pct'].quantile(0.30)
-            data = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
+            threshold = data['feat_atr_pct'].quantile(0.60)
+            data = data[data['feat_atr_pct'] >= threshold].copy()
             if len(data) < 500:
                 print(f"[AVISO] Dataset insuficiente apos filtro de regime ({len(data)} amostras). Ignorando filtro.")
-                self.atr_threshold = 0.0
                 data = self.prepare_features(df) # Recarrega sem filtro
 
         self.feature_cols = [c for c in data.columns if c.startswith('feat_') and 'bb_u' not in c and 'bb_m' not in c and 'bb_l' not in c]
@@ -224,7 +223,7 @@ class MLBrain:
              return 0, 0.0, "Feature mismatch", 0.0
             
         if not np.isfinite(current_features_row).all():
-            return 0, 0.0, "NaN ou Inf detectado", 0.0
+            return 0, 0.0, "NaN detectado", 0.0
         
         feat_vec = current_features_row.reshape(1, -1)
         pred_class = self.model.predict(feat_vec)[0]

@@ -16,7 +16,15 @@ from multicore_master_bot import MulticoreMasterBot
 def mock_bot():
     """Inicializa o bot com dependencias mockadas para evitar chamadas de rede."""
     with patch('multicore_master_bot.DataEngine') as mock_engine, \
-         patch('multicore_master_bot.MLBrain') as mock_brain:
+         patch('multicore_master_bot.MLBrain') as mock_brain, \
+         patch('multicore_master_bot.LocalOracle'), \
+         patch('multicore_master_bot.FeatureStore') as mock_fs, \
+         patch('multicore_master_bot.Ledger') as mock_ledger, \
+         patch('multicore_master_bot.Watchdog'):
+        
+        mock_ledger.return_value.get_last_balance.return_value = 1000.0
+        mock_ledger.return_value.load_active_positions.return_value = []
+        mock_fs.return_value.load_history.return_value = pd.DataFrame()
         
         # Mock do DataEngine
         engine_inst = mock_engine.return_value
@@ -38,6 +46,8 @@ def mock_bot():
         brain_inst = mock_brain.return_value
         brain_inst.train.return_value = 0.85
         brain_inst.predict_signal.return_value = (0, 0.5, "Neutral", 1.0)
+        brain_inst.is_trained = True
+        brain_inst.n_samples = 5000
         
         # Limpar arquivos de resultados de testes anteriores para garantir estado limpo
         if not os.path.exists("results"): os.makedirs("results")
@@ -73,7 +83,7 @@ def test_paper_trading_save_state(mock_bot):
     
     # Aguarda um pouco o thread de log
     import time
-    time.sleep(0.5)
+    time.sleep(2.0)
     
     assert os.path.exists("results/bot_status.json")
     with open("results/bot_status.json", "r") as f:

@@ -1,27 +1,38 @@
 import sys
+import unittest
+import os
 from unittest.mock import MagicMock, patch
 
-# Mock dependencies before importing MLBrain to allow test execution in restricted environment
+# Definimos os mocks que serao usados
 mock_joblib = MagicMock()
 mock_pd = MagicMock()
 mock_np = MagicMock()
 mock_sklearn = MagicMock()
 
-sys.modules['joblib'] = mock_joblib
-sys.modules['pandas'] = mock_pd
-sys.modules['numpy'] = mock_np
-sys.modules['sklearn'] = mock_sklearn
-sys.modules['sklearn.ensemble'] = MagicMock()
-sys.modules['sklearn.metrics'] = MagicMock()
-
-import unittest
-import os
-
 class TestMLBrainErrorPath(unittest.TestCase):
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
+        # Usamos patch.dict para isolar as mudancas no sys.modules apenas para esta classe
+        cls.module_patcher = patch.dict(sys.modules, {
+            'joblib': mock_joblib,
+            'pandas': mock_pd,
+            'numpy': mock_np,
+            'sklearn': mock_sklearn,
+            'sklearn.ensemble': MagicMock(),
+            'sklearn.metrics': MagicMock()
+        })
+        cls.module_patcher.start()
+        
         # Import MLBrain after mocks are set up
         from logic.ml_brain import MLBrain
-        self.brain = MLBrain()
+        cls.MLBrain = MLBrain
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.module_patcher.stop()
+
+    def setUp(self):
+        self.brain = self.MLBrain()
 
     @patch('logic.ml_brain.os.path.exists')
     def test_load_model_file_not_found(self, mock_exists):

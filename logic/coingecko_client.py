@@ -24,8 +24,11 @@ class CoinGeckoClient:
             
             if r.status_code == 200:
                 data = r.json()
-                self.last_dominance = float(data['data']['market_cap_percentage']['btc'])
-                self.last_fetch_time = now
+                if data and 'data' in data and 'market_cap_percentage' in data['data']:
+                    self.last_dominance = float(data['data']['market_cap_percentage'].get('btc', self.last_dominance))
+                    self.last_fetch_time = now
+                else:
+                    print(f"[CoinGecko] Resposta inesperada: {data}")
             else:
                print(f"[CoinGecko] Falha HTTP: {r.status_code}") 
                # Nao atualizamos o fetch_time no caso de fallbacks intermitentes.

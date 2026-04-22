@@ -29,6 +29,8 @@ from logic.risk_manager import RiskManager
 from logic.strategist_agent import StrategistAgent
 from logic.market_memory import MarketMemory
 from logic.local_oracle import LocalOracle
+from logic.coingecko_client import CoinGeckoClient
+from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.xaut_logic import XAUTAnalyzer
 from logic.tribunal import ConsensusTribunal
 from data.data_engine import DataEngine
@@ -454,7 +456,9 @@ class ScoutBot:
                     macro_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
                     btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
                     macro_data, self.btc_dominance = await asyncio.wait_for(asyncio.gather(macro_task, btc_dom_task), timeout=20.0)
-                except Exception: macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
+                except Exception: 
+                    macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
+                    if not hasattr(self, 'btc_dominance'): self.btc_dominance = 50.0
                 
                 miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 m_sent = miro_data['sentiment']; news_sent = miro_data['confidence'] if m_sent == "Bullish" else (-miro_data['confidence'] if m_sent == "Bearish" else 0)

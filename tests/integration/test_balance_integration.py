@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
+import pandas as pd
 from multicore_master_bot import MulticoreMasterBot
 from logic.execution.backtest_engine import BacktestEngine
 
@@ -12,10 +13,18 @@ async def test_balance_sync_integration_with_backtest():
     engine = BacktestEngine(initial_balance=1234.56)
     
     with patch('multicore_master_bot.DataEngine'), \
-         patch('multicore_master_bot.MLBrain'), \
+         patch('multicore_master_bot.MLBrain') as mock_ml, \
          patch('multicore_master_bot.LocalOracle'), \
          patch('multicore_master_bot.Watchdog'), \
+         patch('multicore_master_bot.FeatureStore') as mock_fs, \
+         patch('multicore_master_bot.Ledger') as mock_ledger, \
          patch('multicore_master_bot.BinanceLive', return_value=engine):
+        
+        mock_ledger.return_value.get_last_balance.return_value = 1234.56
+        mock_ledger.return_value.load_active_positions.return_value = []
+        mock_ml.return_value.is_trained = True
+        mock_ml.return_value.n_samples = 5000
+        mock_fs.return_value.load_history.return_value = pd.DataFrame()
         
         # Inicializa o bot em modo live para disparar a logica de sincronizacao
         bot = MulticoreMasterBot(mode="live")

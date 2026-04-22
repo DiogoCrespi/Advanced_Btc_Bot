@@ -2,6 +2,7 @@
 import os
 import logging
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 

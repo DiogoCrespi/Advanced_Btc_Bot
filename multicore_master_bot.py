@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import asyncio
 import socket
-import json
 import math
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
@@ -174,7 +173,7 @@ class WebSocketSupervisor:
 def orjson_default(obj):
     if isinstance(obj, (np.integer, np.floating)): return obj.item()
     if isinstance(obj, np.ndarray): return obj.tolist()
-    raise TypeError
+    return str(obj)
 
 class MulticoreMasterBot:
     def __init__(self, assets=["BTCBRL", "ETHBRL", "SOLBRL", "LINKBRL", "AVAXBRL", "RENDERBRL"], mode="backtest"):
@@ -238,8 +237,12 @@ class MulticoreMasterBot:
         self.listen_key = None
         self.last_balance_sync = datetime.now()
         self.shadow_mode = os.getenv("SHADOW_MODE", "True").lower() == "true"
+        self.enable_ai = os.getenv("ENABLE_AI", "True").lower() == "true"
+        
         if self.shadow_mode:
             print("[BOOT] MODO SHADOW ATIVADO: Nenhuma ordem real sera enviada.")
+        if not self.enable_ai:
+            print("[BOOT] INTELIGENCIA ARTIFICIAL DESATIVADA via .env")
         
         # Persistence & Maturity
         self.feature_store = FeatureStore()
@@ -263,6 +266,8 @@ class MulticoreMasterBot:
 
         self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
         # Sincronizacao de persistencia: Prioridade para o Ledger (SQLite)
+        self.usdt_balance = 0.0
+        self.xaut_balance = 0.0
         saved_balance = self.ledger.get_last_balance()
         self.balance = saved_balance if saved_balance is not None else self.load_balance()
         self.positions = self.ledger.load_active_positions()
@@ -278,49 +283,53 @@ class MulticoreMasterBot:
         # Warmup Buffer
         history_df = self.feature_store.load_history()
         
-        for asset in assets:
-            # Prioriza o modelo v2_massive para BTCUSDT se existir
-            massive_path = f"models/{asset.lower()}_brain_v2_massive.pkl"
-            model_path = f"models/{asset.lower()}_brain_v1.pkl"
-            
-            brain = self.brains[asset]
-            
-            # 1. Carregar Modelo (Prioriza Massive -> V1)
-            if os.path.exists(massive_path):
-                print(f"[BOOT] {asset}: Carregando Modelo GOLD STANDARD (v2_massive)...")
-                brain.load_model(massive_path)
-            else:
-                print(f"[BOOT] {asset}: Carregando Modelo v1...")
-                brain.load_model(model_path)
-            
-            # 2. Maturidade dos Dados & Backfill
-            asset_history = history_df[history_df['symbol'] == asset] if not history_df.empty and 'symbol' in history_df.columns else pd.DataFrame()
-            
-            if len(asset_history) < 10000 and self.mode != "backtest":
-                print(f"[BOOT] {asset}: Dados insuficientes ({len(asset_history)}). Iniciando Backfill...")
-                new_data = self.engine.fetch_historical_backfill(asset, target_samples=10000)
-                if not new_data.empty:
-                    new_data['symbol'] = asset
-                    self.feature_store.append_new_data(new_data)
-                    asset_history = new_data
-            
-            # 3. Treinamento/Ajuste (se necessario)
-            if not brain.is_trained or brain.n_samples < 2000:
-                print(f"[BOOT] {asset}: Treinando com dataset maturado ({len(asset_history)} amostras)...")
-                if not asset_history.empty:
-                    asset_history = self.engine.apply_indicators(asset_history)
-                    score = brain.train(asset_history, train_full=True, tp=self.take_profit, sl=self.stop_loss)
-                    brain.save_model(model_path)
-                    self.stats[asset]["oos_score"] = score
-            else:
-                print(f"[BOOT] {asset}: Modelo LIVE pronto (Samples: {brain.n_samples} | Status: {brain.status})")
+        if self.enable_ai:
+            for asset in assets:
+                # Prioriza o modelo v2_massive para BTCUSDT se existir
+                massive_path = f"models/{asset.lower()}_brain_v2_massive.pkl"
+                model_path = f"models/{asset.lower()}_brain_v1.pkl"
+                
+                brain = self.brains[asset]
+                
+                # 1. Carregar Modelo (Prioriza Massive -> V1)
+                if os.path.exists(massive_path):
+                    print(f"[BOOT] {asset}: Carregando Modelo GOLD STANDARD (v2_massive)...")
+                    brain.load_model(massive_path)
+                else:
+                    print(f"[BOOT] {asset}: Carregando Modelo v1...")
+                    brain.load_model(model_path)
+                
+                # 2. Maturidade dos Dados & Backfill
+                asset_history = history_df[history_df['symbol'] == asset] if not history_df.empty and 'symbol' in history_df.columns else pd.DataFrame()
+                
+                if len(asset_history) < 10000 and self.mode != "backtest":
+                    print(f"[BOOT] {asset}: Dados insuficientes ({len(asset_history)}). Iniciando Backfill...")
+                    new_data = self.engine.fetch_historical_backfill(asset, target_samples=10000)
+                    if not new_data.empty:
+                        new_data['symbol'] = asset
+                        self.feature_store.append_new_data(new_data)
+                        asset_history = new_data
+                
+                # 3. Treinamento/Ajuste (se necessario)
+                if not brain.is_trained or brain.n_samples < 2000:
+                    print(f"[BOOT] {asset}: Treinando com dataset maturado ({len(asset_history)} amostras)...")
+                    if not asset_history.empty:
+                        asset_history = self.engine.apply_indicators(asset_history)
+                        score = brain.train(asset_history, train_full=True, tp=self.take_profit, sl=self.stop_loss)
+                        brain.save_model(model_path)
+                        self.stats[asset]["oos_score"] = score
+                else:
+                    print(f"[BOOT] {asset}: Modelo LIVE pronto (Samples: {brain.n_samples} | Status: {brain.status})")
 
-            # 4. v3-Alpha Shadow Load
-            shadow_path = f"models/brain_rf_v3_alpha_{asset}.pkl"
-            if self.shadow_brains[asset].load_model(shadow_path):
-                print(f"[BOOT] {asset}: Modelo Shadow v3-Alpha Ativo.")
-            else:
-                print(f"[WARN] {asset}: Shadow v3-Alpha nao encontrado.")
+                # 4. v3-Alpha Shadow Load
+                shadow_path = f"models/brain_rf_v3_alpha_{asset}.pkl"
+                if self.shadow_brains[asset].load_model(shadow_path):
+                    print(f"[BOOT] {asset}: Modelo Shadow v3-Alpha Ativo.")
+                else:
+                    print(f"[WARN] {asset}: Shadow v3-Alpha nao encontrado.")
+        else:
+            print("[BOOT] Pulando Boot de Modelos (IA Desativada)")
+
 
 
         # Background tasks moved to main() to avoid "no running event loop" error
@@ -336,8 +345,9 @@ class MulticoreMasterBot:
                 elif action == "write":
                     with open(path, "w", encoding="utf-8") as f: f.write(content)
                 elif action == "save_state":
-                    with open(path, "wb") as f: f.write(json.dumps(content, option=json.OPT_INDENT_2))
-            except Exception: pass
+                    with open(path, "wb") as f: f.write(json.dumps(content, option=json.OPT_INDENT_2, default=orjson_default))
+            except Exception as e:
+                print(f"[LOG_WORKER] Erro critico: {e}")
             self.log_queue.task_done()
 
     def async_log(self, p, c): self.log_queue.put(("append", (p, c)))
@@ -483,7 +493,7 @@ class MulticoreMasterBot:
         miro_conf = miro_data.get('confidence', 0.5)
         miro_score = miro_conf if miro_sent == "Bullish" else (-miro_conf if miro_sent == "Bearish" else 0)
         
-        status_oraculo = "ATIVADO (LocalOracle)"
+        status_oraculo = "ATIVADO (LocalOracle)" if self.enable_ai else "DESATIVADO"
         miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f} [{status_oraculo}]\n"
         
         # Composite
@@ -635,6 +645,7 @@ class MulticoreMasterBot:
                         df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
                         if df.empty: return
                         df = self.engine.apply_indicators(df)
+                        f_risk = 0.0 # Default failure risk
                         
                         # Brains candidates
                         live_brain = self.brains[asset]
@@ -654,22 +665,30 @@ class MulticoreMasterBot:
                             for k, v in last_row.items():
                                 if "Timestamp" in str(type(v)): last_row[k] = v.isoformat()
                             payload = json.dumps({"asset": asset, "features": last_row, "imbalance": imbalance})
-                            self.udp_sock.sendto(payload.encode('utf-8'), ("127.0.0.1", 5555))
+                            self.udp_sock.sendto(payload, ("127.0.0.1", 5555))
                         except Exception as e:
                             print(f"[IPC ERROR] {e}")
     
 
                         # Parallelize predictions across ProcessPoolExecutor
-                        tasks = [
-                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
-                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, shadow_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
-                            loop.run_in_executor(self.process_executor, _cpu_heavy_predict, ancestral_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45)
-                        ]
-                        
-                        results = await asyncio.gather(*tasks)
-                        (sig, prob, reason, price, rel, atr) = results[0]
-                        (s_sig, s_prob, s_reason, _, _, _) = results[1]
-                        (a_sig, a_prob, _, _, _, _) = results[2]
+                        if self.enable_ai:
+                            tasks = [
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, shadow_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, ancestral_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45)
+                            ]
+                            
+                            results = await asyncio.gather(*tasks)
+                            (sig, prob, reason, price, rel, atr) = results[0]
+                            (s_sig, s_prob, s_reason, _, _, _) = results[1]
+                            (a_sig, a_prob, _, _, _, _) = results[2]
+                        else:
+                            # AI Disabled: Neutral signals
+                            price = float(df['close'].iloc[-1])
+                            sig, prob, reason, rel, atr = 0, 0.5, "AI_DISABLED", 1.0, 0.0
+                            s_sig, s_prob, s_reason = 0, 0.5, "AI_DISABLED"
+                            a_sig, a_prob = 0, 0.5
+
                         
                         # Logging Shadow Decision (PR #65)
                         if s_sig != 0:
@@ -710,7 +729,8 @@ class MulticoreMasterBot:
                                 self.feature_store.append_new_data(last_row)
                                 
                             if fsig != 0: self.signal_history[asset].append({'ts':datetime.now(), 'sig':fsig, 'price':price, 'metrics':{}})
-                    except Exception: pass
+                    except Exception as e:
+                        print(f"[ERROR] Falha scan {asset}: {e}")
                     finally:
                         # Limpeza de Memoria (Anti-Leak)
                         if 'df' in locals(): del df
@@ -917,8 +937,12 @@ async def main(bot):
 
     supervisor = WebSocketSupervisor(bot)
     asyncio.create_task(supervisor.start())
-    asyncio.create_task(bot._train_initial_evo_pop())
-    asyncio.create_task(bot.oracle.start_loop())
+    if bot.enable_ai:
+        asyncio.create_task(bot._train_initial_evo_pop())
+    if bot.enable_ai:
+        asyncio.create_task(bot.oracle.start_loop())
+    else:
+        print("[INIT] Ignorando Oracle Loop (IA Desativada)")
     await bot.run_async()
 
 if __name__ == "__main__":

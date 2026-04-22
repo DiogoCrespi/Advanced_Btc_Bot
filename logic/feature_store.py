@@ -1,36 +1,30 @@
-# NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import os
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 class FeatureStore:
     """
-    Persistent Feature Store using Parquet (pyarrow).
+    Persistent Feature Store using Pickle.
     Garante que o bot nao tenha 'cegueira de dados' apos reinicializacoes.
     """
-    def __init__(self, data_dir="data", filename="market_history.parquet"):
+    def __init__(self, data_dir="data", filename="market_history.pkl"):
         self.data_dir = data_dir
         self.filepath = os.path.join(data_dir, filename)
         os.makedirs(data_dir, exist_ok=True)
 
     def load_history(self):
         """
-        Carrega o historico do disco.
-        Usa memory-mapping (pyarrow) para performance multicore.
+        Carrega o historico do disco via Pickle.
         """
         if not os.path.exists(self.filepath):
             print(f"[WARN] [STORE] Arquivo {self.filepath} nao encontrado.")
             return pd.DataFrame()
         
         try:
-            # Memory mapping=True permite que multiplos processos leiam sem duplicar RAM excessivamente
-            table = pq.read_table(self.filepath, memory_map=True)
-            df = table.to_pandas()
+            df = pd.read_pickle(self.filepath)
             print(f"[SUCCESS] [STORE] Carregadas {len(df)} amostras do historico persistente.")
             return df
         except Exception as e:
-            print(f"[ERROR] [STORE] Erro ao carregar Parquet: {e}")
+            print(f"[ERROR] [STORE] Erro ao carregar Pickle: {e}")
             return pd.DataFrame()
 
     def save_history(self, df):
@@ -40,11 +34,9 @@ class FeatureStore:
         if df.empty: return
         
         try:
-            table = pa.Table.from_pandas(df)
-            pq.write_table(table, self.filepath, compression='snappy')
-            # print(f"💾 [STORE] Historico persistido: {len(df)} linhas.")
+            df.to_pickle(self.filepath)
         except Exception as e:
-            print(f"[ERROR] [STORE] Erro ao salvar Parquet: {e}")
+            print(f"[ERROR] [STORE] Erro ao salvar Pickle: {e}")
 
     def append_new_data(self, new_df):
         """
@@ -67,7 +59,7 @@ class FeatureStore:
             
             self.save_history(combined_df)
         except Exception as e:
-            print(f"[ERROR] [STORE] Erro no append Parquet: {e}")
+            print(f"[ERROR] [STORE] Erro no append Pickle: {e}")
 
     def get_maturity_score(self, df):
         """
