@@ -629,6 +629,7 @@ class MulticoreMasterBot:
                         asyncio.gather(macro_task, btc_dom_task),
                         timeout=20.0
                     )
+                    if macro_data is None: macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
                     miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
                 except asyncio.TimeoutError:
                     print("[WARN] Timeout buscando dados externos. Usando fallbacks...")
@@ -762,6 +763,9 @@ class MulticoreMasterBot:
                 agent_macro = macro_data.copy()
                 agent_macro['news_sentiment'] = news_sent
                 agent_res = self.agent.run({'tier2': tier2}, agent_macro)
+                if not agent_res or 'allocation_mult' not in agent_res:
+                    print("[WARN] StrategistAgent não retornou resultado válido. Pulando ciclo...")
+                    continue
                 final_mult = agent_res['allocation_mult']
                 
                 # Loop de Execucao

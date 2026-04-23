@@ -147,7 +147,10 @@ class LocalOracle:
                     res = requests.post(url, headers=headers, json=payload, timeout=30)
                     
                     if res.status_code == 200:
-                        return res.json().get('choices', [{}])[0].get('message', {}).get('content', '')
+                        choices = res.json().get('choices')
+                        if choices and len(choices) > 0:
+                            return choices[0].get('message', {}).get('content', '')
+                        return ""
                     elif res.status_code == 429:
                         logger.warning(f"[ORACLE] Groq Rate Limit (429). Trocando chave...")
                     else:
@@ -160,9 +163,13 @@ class LocalOracle:
                     res = requests.post(url, headers=headers, json=payload, timeout=30)
                     
                     if res.status_code == 200:
-                        candidates = res.json().get('candidates', [])
-                        if candidates and 'content' in candidates[0]:
-                            return candidates[0]['content'].get('parts', [{}])[0].get('text', '')
+                        candidates = res.json().get('candidates')
+                        if candidates and len(candidates) > 0:
+                            content = candidates[0].get('content')
+                            if content and 'parts' in content:
+                                parts = content.get('parts')
+                                if parts and len(parts) > 0:
+                                    return parts[0].get('text', '')
                         return ""
                     elif res.status_code == 429:
                         logger.warning(f"[ORACLE] Gemini Rate Limit (429). Trocando chave...")

@@ -22,17 +22,22 @@ class ConsensusTribunal:
         """
         # 1. VETO MACRO (Gatekeeper Global)
         if macro_status and macro_status.get('is_extreme'):
-             live_sig = signals.get('live', {}).get('sig', 0)
+             live_info = signals.get('live') or {}
+             live_sig = live_info.get('sig', 0)
              if live_sig == 1: # Bloqueia apenas compras (Risk-On) em cenario hostil
-                 return 0, 0.1, f"VETO MACRO: {macro_status['reason']}"
+                 return 0, 0.1, f"VETO MACRO: {macro_status.get('reason', 'Não especificado')}"
 
         # 2. Veto por Analogia de Falha (Self-Correction)
         if failure_risk >= 2:
             return 0, 0.2, f"VETO DE PROBABILIDADE: Estado similar a {failure_risk} falhas passadas."
 
-        live_sig = signals.get('live', {}).get('sig', 0)
-        shadow_sig = signals.get('shadow', {}).get('sig', 0)
-        ancestral_sig = signals.get('ancestral', {}).get('sig', 0)
+        live_info = signals.get('live') or {}
+        shadow_info = signals.get('shadow') or {}
+        ancestral_info = signals.get('ancestral') or {}
+        
+        live_sig = live_info.get('sig', 0)
+        shadow_sig = shadow_info.get('sig', 0)
+        ancestral_sig = ancestral_info.get('sig', 0)
         
         vol = regime_metrics.get('vol', 0.0)
         is_extreme_market = vol >= self.veto_threshold
@@ -52,7 +57,8 @@ class ConsensusTribunal:
         
         if not active_sigs:
             # Fallback for visibility: use live prob even if signal is 0
-            live_prob = signals.get('live', {}).get('prob', 0.0)
+            live_info = signals.get('live') or {}
+            live_prob = live_info.get('prob', 0.0)
             return 0, live_prob, "Consenso: Neutro"
             
         # Contagem de votos

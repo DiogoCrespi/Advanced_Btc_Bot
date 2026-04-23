@@ -47,7 +47,8 @@ class StrategistAgent:
         return builder.compile()
 
     def _node_analyze_macro(self, state: StrategistState):
-        md = state['macro_data']
+        md = state.get('macro_data')
+        if md is None: md = {}
         news_sent = md.get('news_sentiment', 0.0) 
         score = self.radar.get_macro_score(
             md.get('dxy_change', 0), 

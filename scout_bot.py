@@ -473,7 +473,9 @@ class ScoutBot:
                     macro_task = loop.run_in_executor(self.executor, self.engine.fetch_macro_data)
                     btc_dom_task = loop.run_in_executor(self.executor, self.cg_client.get_btc_dominance)
                     macro_data, self.btc_dominance = await asyncio.wait_for(asyncio.gather(macro_task, btc_dom_task), timeout=20.0)
-                except Exception: 
+                    if macro_data is None: macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
+                except Exception as e:
+                    print(f"[ERROR] Falha em dados externos: {e}")
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
                     if not hasattr(self, 'btc_dominance'): self.btc_dominance = 50.0
                 
@@ -486,7 +488,8 @@ class ScoutBot:
                 miro_data = {"sentiment": s_sent, "confidence": s_conf}
                 m_sent = miro_data['sentiment']; news_sent = miro_data['confidence'] if m_sent == "Bullish" else (-miro_data['confidence'] if m_sent == "Bearish" else 0)
                 self.macro_risk = self.agent.radar.get_macro_score(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0), macro_data.get('gold_change',0), news_sent)
-                self.macro_status = {'is_extreme': self.agent.radar.is_risk_off_extreme(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0))[0]}
+                is_ext, m_reason = self.agent.radar.is_risk_off_extreme(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0))
+                self.macro_status = {'is_extreme': is_ext, 'reason': m_reason}
 
                 asset_signals = {}; signals_lock = Lock()
                 async def scan_asset(asset):
@@ -512,7 +515,8 @@ class ScoutBot:
                 await asyncio.gather(*(scan_asset(a) for a in self.assets))
                 agent_res = self.agent.run({'tier2': sum([s['signal'] for s in asset_signals.values()])}, macro_data)
                 
-                for asset, s in asset_signals.items():
+                if agent_res and 'decision' in agent_res:
+                    for asset, s in asset_signals.items():
                     active = self.positions.get(asset, [])
                     rem = []
                     for p in active:
