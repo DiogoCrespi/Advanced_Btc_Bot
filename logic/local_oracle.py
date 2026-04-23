@@ -27,11 +27,11 @@ class LocalOracle:
         # Carrega pool de APIs gratuitas anti-429
         self.api_keys = []
         groq = os.getenv("GROQ_API_KEY")
-        if groq: self.api_keys.append({"provider": "groq", "key": groq, "model": "llama3-70b-8192"})
+        if groq: self.api_keys.append({"provider": "groq", "key": groq, "model": "llama-3.3-70b-versatile"})
         
         for i in range(1, 6):
             gemini = os.getenv(f"GEMINI_KEY_{i}")
-            if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-1.5-flash"}) 
+            if gemini: self.api_keys.append({"provider": "gemini", "key": gemini, "model": "gemini-flash-latest"}) 
             
         if not self.api_keys:
             self.api_keys.append({"provider": "ollama", "key": "none", "model": "phi3:mini"})
@@ -40,6 +40,7 @@ class LocalOracle:
 
     async def start_loop(self):
         """Loop infinito assincrono (Background)."""
+        print("[ORACLE] Slow Track iniciada. Personas acordadas.")
         logger.info("[ORACLE] Slow Track iniciada. Personas acordadas.")
         
         while self._is_running:

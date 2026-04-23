@@ -47,9 +47,24 @@ logger = logging.getLogger("ScoutBot")
 SIDE_BUY = 'BUY'
 SIDE_SELL = 'SELL'
 
-def _cpu_heavy_predict(brain, df, macro_risk, btc_dom, threshold):
-    """Encapsula a predição para ser rodada em ProcessPoolExecutor e evitar GIL."""
-    return brain.predict(df, macro_risk, btc_dom, threshold)
+def _cpu_heavy_predict(brain, df, macro_risk=0.5, btc_dom=50.0, min_conf=0.38):
+    try:
+        df['macro_risk'] = macro_risk
+        df['btc_dominance'] = btc_dom
+        
+        df = brain.prepare_features(df)
+        if df.empty: return 0, 0.0, "Dados insuficientes apos limpeza", 0.0, 0.0, 0.0
+        
+        current_price = float(df['close'].values[-1])
+        curr_feat = df[brain.feature_cols].values[-1]
+        
+        # Extrair ATR se disponivel para o RiskManager
+        atr = float(df['feat_atr'].values[-1]) if 'feat_atr' in df.columns else 0.0
+        
+        signal, prob, reason, reliability = brain.predict_signal(curr_feat, min_confidence=min_conf)
+        return signal, prob, reason, current_price, reliability, atr
+    except Exception as e:
+        return 0, 0.0, f"Erro Predicao: {e}", 0.0, 0.0, 0.0
 
 class Watchdog:
     """Monitora a saúde das threads e loops assíncronos."""
@@ -367,7 +382,9 @@ class ScoutBot:
         if not port_lines: portfolio += "| Nenhuma posicao aberta no momento. |\n"
         portfolio += f"+{'-'*80}+\n"
         
-        yield_s = f"| [COFRE BRL] {yield_info['symbol'] if yield_info else 'Nenhum'}: {yield_info['yield_apr']:.2% if yield_info else 0.0} a.a. |\n+{'-'*80}+\n"
+        y_sym = yield_info['symbol'] if yield_info else 'Nenhum'
+        y_apr = yield_info['yield_apr'] if yield_info else 0.0
+        yield_s = f"| [COFRE BRL] {y_sym}: {y_apr:.2%} a.a. |\n+{'-'*80}+\n"
         usdt_s = f"| [USDT/BRL] Preco: {usdt_data['price']:,.2f} | RSI: {usdt_data['rsi']:.1f} | Saldo: {self.usdt_balance:,.2f} USDT |\n+{'-'*80}+\n"
         
         alpha = "| [ALPHA ML ] Sinais baseados em Order Flow & ML: |\n"
@@ -460,7 +477,13 @@ class ScoutBot:
                     macro_data = {'dxy_change': 0, 'sp500_change': 0, 'gold_change': 0}
                     if not hasattr(self, 'btc_dominance'): self.btc_dominance = 50.0
                 
-                miro_data = {"sentiment": self.oracle_state["sentiment"], "confidence": self.oracle_state["confidence"]}
+                # Fallback safety for oracle_state
+                if self.oracle_state is None:
+                    self.oracle_state = {"sentiment": "Neutral", "confidence": 0.5, "multiplier": 1.0, "macro_risk": 0.5}
+                
+                s_sent = self.oracle_state.get("sentiment", "Neutral")
+                s_conf = self.oracle_state.get("confidence", 0.5)
+                miro_data = {"sentiment": s_sent, "confidence": s_conf}
                 m_sent = miro_data['sentiment']; news_sent = miro_data['confidence'] if m_sent == "Bullish" else (-miro_data['confidence'] if m_sent == "Bearish" else 0)
                 self.macro_risk = self.agent.radar.get_macro_score(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0), macro_data.get('gold_change',0), news_sent)
                 self.macro_status = {'is_extreme': self.agent.radar.is_risk_off_extreme(macro_data.get('dxy_change',0), macro_data.get('sp500_change',0))[0]}
@@ -473,7 +496,7 @@ class ScoutBot:
                         df = self.engine.apply_indicators(df)
                         imbalance = await loop.run_in_executor(self.executor, self.engine.fetch_order_book_imbalance, asset)
                         
-                        tasks = [loop.run_in_executor(self.process_executor, _cpu_heavy_predict, brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45) 
+                        tasks = [loop.run_in_executor(self.process_executor, _cpu_heavy_predict, brain, df.copy(), self.macro_risk, self.btc_dominance, 0.38) 
                                  for brain in [self.brains[asset], self.shadow_brains[asset], self.evo_brains[self.evo_engine.population[0].id][asset]]]
                         
                         results = await asyncio.gather(*tasks)
@@ -539,7 +562,7 @@ class ScoutBot:
                 if datetime.now() - self.last_balance_sync > timedelta(minutes=15): await self.sync_balances_from_exchange()
                 self.save_balance(); self.save_state()
                 self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)
-            except Exception as e: print(f"Error: {e}")
+            except Exception as e: import traceback; print(f"Error: {e}"); traceback.print_exc()
             await asyncio.sleep(30)
 
 async def main(bot):

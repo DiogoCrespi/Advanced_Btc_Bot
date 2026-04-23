@@ -67,9 +67,9 @@ class MLBrain:
         # Calculamos o threshold baseados nas ultimas 1000 amostras do dataframe fornecido
         if 'feat_atr_pct' in df.columns:
             historical_atr = df['feat_atr_pct'].tail(1000)
-            self.atr_threshold = historical_atr.quantile(0.60)
-            # Protecao: Nunca cair abaixo de um threshold minimo (ex: 0.5%)
-            self.atr_threshold = max(0.5, self.atr_threshold)
+            self.atr_threshold = historical_atr.quantile(0.20)
+            # Protecao: Nunca cair abaixo de um threshold minimo (ex: 0.1%)
+            self.atr_threshold = max(0.1, self.atr_threshold)
         
         # Dropamos NaNs (necessario para o RF)
         return df.dropna()
@@ -169,8 +169,8 @@ class MLBrain:
         test_start = split_idx + _hz + 10 # Purge gap + embargo
         X_test, y_test = X[test_start:], y[test_start:]
         
-        if len(X_train) == 0: return 0.0
-            
+        print(f"[ML-DEBUG] Training with X_train: {X_train.shape}, y_train: {y_train.shape}, Classes: {np.unique(y_train)}")
+        self.model.oob_score = False # Temporarily disable to bypass sklearn bug
         self.model.fit(X_train, y_train)
         self.n_samples = len(X_train)
         score = self.model.score(X_test, y_test) if len(X_test) > 0 else 0.0
@@ -186,7 +186,7 @@ class MLBrain:
         print(audit_msg)
         
         # Um modelo e considerado LIVE apenas se tiver maturidade minima
-        self.status = "LIVE" if self.n_samples >= 2000 else "OBSERVATION"
+        self.status = "LIVE" if self.n_samples >= 400 else "OBSERVATION"
         
         self.is_trained = True
         return score if len(X_test) > 0 else oob
@@ -218,7 +218,9 @@ class MLBrain:
         curr_atr = feats.get('feat_atr_pct', 0.0)
         
         if curr_atr < self.atr_threshold:
-            return 0, 0.0, f"VETO REGIME: Baixa Volatilidade ({curr_atr:.2f} < {self.atr_threshold:.2f})", self.reliability_score
+            reason = f"VETO REGIME: Baixa Volatilidade ({curr_atr:.2f} < {self.atr_threshold:.2f})"
+            print(f"[ML-VETO] {reason}")
+            return 0, 0.0, reason, self.reliability_score
 
         if len(current_features_row) != len(feature_names):
              return 0, 0.0, "Feature mismatch", 0.0
@@ -226,6 +228,9 @@ class MLBrain:
         if not np.isfinite(current_features_row).all():
             return 0, 0.0, "NaN ou Inf detectado", 0.0
         
+        if not hasattr(self.model, "estimators_") or len(self.model.estimators_) == 0:
+            return 0, 0.0, "Model not properly initialized", 0.0
+
         feat_vec = current_features_row.reshape(1, -1)
         pred_class = self.model.predict(feat_vec)[0]
         probs = self.model.predict_proba(feat_vec)[0]

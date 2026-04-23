@@ -261,8 +261,8 @@ class MulticoreMasterBot:
         self.log_thread.start()
         self.pos_lock = Lock()
         self.live_prices = {}
-        self.executor = ThreadPoolExecutor(max_workers=10)
-        self.process_executor = ProcessPoolExecutor(max_workers=2)
+        self.executor = ThreadPoolExecutor(max_workers=5)
+        self.process_executor = ProcessPoolExecutor(max_workers=1)
 
         self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
         # Sincronizacao de persistencia: Prioridade para o Ledger (SQLite)
@@ -582,10 +582,27 @@ class MulticoreMasterBot:
     async def _train_initial_evo_pop(self):
         loop = asyncio.get_running_loop()
         tasks = []
+        # 1. Train Main Brains
+        for asset in self.assets:
+            brain = self.brains[asset]
+            df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
+            if not df.empty:
+                df = self.engine.apply_indicators(df)
+                tasks.append(loop.run_in_executor(self.executor, brain.train, df))
+        
+        # 2. Train Shadow Brains
+        for asset in self.assets:
+            brain = self.shadow_brains[asset]
+            df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
+            if not df.empty:
+                df = self.engine.apply_indicators(df)
+                tasks.append(loop.run_in_executor(self.executor, brain.train, df))
+
+        # 3. Train Evo Brains
         for dna in self.evo_engine.population:
             for asset in self.assets:
                 brain = self.evo_brains[dna.id][asset]
-                df = self.engine.fetch_binance_klines(asset, limit=1000)
+                df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
                 if not df.empty:
                     df = self.engine.apply_indicators(df)
                     tasks.append(loop.run_in_executor(self.executor, brain.train, df))
@@ -673,9 +690,9 @@ class MulticoreMasterBot:
                         # Parallelize predictions across ProcessPoolExecutor
                         if self.enable_ai:
                             tasks = [
-                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
-                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, shadow_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45),
-                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, ancestral_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.45)
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, live_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.38),
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, shadow_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.38),
+                                loop.run_in_executor(self.process_executor, _cpu_heavy_predict, ancestral_brain, df.copy(), self.macro_risk, self.btc_dominance, 0.38)
                             ]
                             
                             results = await asyncio.gather(*tasks)
@@ -764,7 +781,7 @@ class MulticoreMasterBot:
                         if exit_r or act == 'SELL':
                             if self.shadow_mode or is_p_shadow:
                                 # Shadow Settlement
-                                logger.info(f"[SHADOW] Liquidando {asset} @ {s['price']} ({pnl:+.2%})")
+                                self.logger.info(f"[SHADOW] Liquidando {asset} @ {s['price']} ({pnl:+.2%})")
                                 self.ledger.close_position(asset)
                                 self.ledger.record_completed_trade(asset, "SELL" if p['signal']==1 else "BUY", p['entry'], s['price'], p['qty'], pnl, p['cost']*pnl, p['time'], exit_r or r_reason, is_shadow=True)
                                 self.memory.settle_shadow_outcome(p.get('did'), s['price'], pnl)
@@ -773,7 +790,7 @@ class MulticoreMasterBot:
                                 # Real Execution
                                 qty = p['qty']
                                 side = SIDE_SELL if p['signal'] == 1 else SIDE_BUY
-                                logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
+                                self.logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
                                 order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                 if order:
                                     final_price = float(order.get('price', s['price']))
@@ -817,7 +834,7 @@ class MulticoreMasterBot:
                                     # Global Shadow Mode
                                     side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
                                     qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                    logger.info(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']}")
+                                    self.logger.info(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']}")
                                     did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
                                     pos_data = {
                                         "entry": s['price'], "signal": s['signal'], "qty": qty, 
@@ -830,7 +847,7 @@ class MulticoreMasterBot:
                                     # Real Entry
                                     side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
                                     qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                    logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
+                                    self.logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
                                     order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                     if order:
                                         actual_price = float(order.get('price', s['price']))

@@ -111,11 +111,11 @@ class StrategistAgent:
         
         # 1. Filtro de Microestrutura (Veto por Imbalance do Order Book)
         # Se imbalance < -0.2, ha muito mais liquidez de venda (Asks) do que compra (Bids).
-        if signal == 1 and book_imbalance < -0.20:
+        if signal == 1 and book_imbalance < -0.40:
             return "VETO", f"Muralha de Venda Detectada (Imbalance: {book_imbalance:.2f})", modifiers
         
         # Se imbalance > 0.2, ha muito mais liquidez de compra (Bids) do que venda (Asks).
-        if signal == -1 and book_imbalance > 0.20:
+        if signal == -1 and book_imbalance > 0.40:
             return "VETO", f"Suporte de Compra Detectado (Imbalance: {book_imbalance:.2f})", modifiers
 
         # 2. Filtro de Probabilidade Dinamico
@@ -124,7 +124,7 @@ class StrategistAgent:
         
         if is_v3:
             # Isencao v3-Alpha: Alpha vem do Payoff, nao da probabilidade base.
-            threshold = 0.50 
+            threshold = 0.38 
         elif reliability < 0.5:
             threshold = 0.80 # Penalidade mantida para v1/v2 em warmup
         

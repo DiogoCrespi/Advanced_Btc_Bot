@@ -1,7 +1,14 @@
 {
   "balance": 9999.99,
   "usdt_balance": 0.002,
-  "positions": {},
+  "positions": {
+    "SOLBRL": [],
+    "LINKBRL": [],
+    "AVAXBRL": [],
+    "RENDERBRL": [],
+    "BTCBRL": [],
+    "ETHBRL": []
+  },
   "xaut_positions": [],
   "caution_mode": false,
   "reliability_stats": {
