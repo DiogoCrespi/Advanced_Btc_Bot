@@ -4,7 +4,7 @@ numpy==1.24.3
 requests==2.31.0
 tavily-python>=0.3.0
 python-dotenv==1.0.1
-scikit-learn==1.2.2
+scikit-learn>=1.2.2
 python-binance==1.0.19
 orjson==3.11.8
 neo4j>=5.18.0

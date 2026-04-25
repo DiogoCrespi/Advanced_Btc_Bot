@@ -33,7 +33,7 @@ def test_macro_veto_not_applied_for_sell(tribunal):
     )
 
     assert sig == -1
-    assert conf == 1.0
+    assert conf == 0.9
     assert "Consenso de Venda" in reason
 
 def test_failure_analogy_veto(tribunal):
@@ -67,7 +67,7 @@ def test_ancestral_veto_divergence(tribunal):
     assert sig == 0
     assert conf == 0.4
     assert reason == "VETO ANCESTRAL: Divergencia em Alta Volatilidade"
-
+ 
 def test_ancestral_veto_caution(tribunal):
     # High volatility, ancestral is 0, live is not 0
     signals = {
@@ -117,7 +117,7 @@ def test_consensus_buy_strong(tribunal):
     )
 
     assert sig == 1
-    assert conf == 1.0
+    assert conf == 0.9
     assert reason == "Consenso de Compra (3/3)"
 
 def test_consensus_buy_weak(tribunal):
@@ -135,7 +135,7 @@ def test_consensus_buy_weak(tribunal):
 
     assert sig == 1
     assert conf == 0.7
-    assert reason == "Consenso de Compra (2/3)"
+    assert reason == "Consenso de Compra (2/2)"
 
 def test_consensus_sell_strong(tribunal):
     signals = {
@@ -151,7 +151,7 @@ def test_consensus_sell_strong(tribunal):
     )
 
     assert sig == -1
-    assert conf == 1.0
+    assert conf == 0.9
     assert reason == "Consenso de Venda (3/3)"
 
 def test_total_conflict(tribunal):
@@ -168,8 +168,8 @@ def test_total_conflict(tribunal):
     )
 
     assert sig == 0
-    assert conf == 0.2
-    assert reason == "CONFLITO: Modelos divergem completamente"
+    assert conf == 0.1
+    assert reason == "Indecisao Colegiada"
 
 def test_isolated_signal(tribunal):
     signals = {

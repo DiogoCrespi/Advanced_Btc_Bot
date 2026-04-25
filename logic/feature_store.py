@@ -21,7 +21,6 @@ class FeatureStore:
         
         try:
             df = pd.read_pickle(self.filepath)
-            print(f"[SUCCESS] [STORE] Carregadas {len(df)} amostras do historico persistente.")
             return df
         except Exception as e:
             print(f"[ERROR] [STORE] Erro ao carregar Pickle: {e}")

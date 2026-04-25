@@ -33,6 +33,7 @@ from logic.coingecko_client import CoinGeckoClient
 from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.xaut_logic import XAUTAnalyzer
 from logic.tribunal import ConsensusTribunal
+from logic.tv_connector import TVConnector
 from data.data_engine import DataEngine
 from logic.basis_logic import BasisLogic
 from logic.usdt_brl_logic import UsdtBrlLogic
@@ -236,6 +237,7 @@ class ScoutBot:
         self.oracle = LocalOracle(self.memory, self.oracle_state)
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
+        self.tv_connector = TVConnector()
         self.risk_manager = RiskManager()
         self.ledger = Ledger(db_path='results/scout_ledger.db')
         self.limit_executor = LimitExecutor(self.exchange)
@@ -273,6 +275,7 @@ class ScoutBot:
         self.total_equity = self.balance
         self.dashboard_logs = deque(maxlen=5)
         self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55)
+        self.last_usdt_trade = datetime.now() - timedelta(hours=1)
         
         print("[INIT] Booting Multicore Brains...")
         os.makedirs("models", exist_ok=True)
@@ -280,7 +283,7 @@ class ScoutBot:
             model_path = f"models/{asset.lower()}_brain_v1.pkl"
             if not self.brains[asset].load_model(model_path):
                 print(f"[WARN] {asset}: Treinando v1 do zero...")
-                df = self.engine.fetch_binance_klines(asset, limit=1000)
+                df = self.engine.fetch_binance_klines(asset, limit=1500)
                 if not df.empty:
                     df = self.engine.apply_indicators(df)
                     score = self.brains[asset].train(df, train_full=True, tp=self.take_profit, sl=self.stop_loss)
@@ -427,13 +430,14 @@ class ScoutBot:
         sig, conf, reason, metrics = self.usdt_logic.get_signal(df, macro_risk)
         dec, areason = self.agent.assess_usdt_opportunity(sig, conf, reason)
         if dec == "APPROVE":
-            if sig == 1 and self.balance >= 100:
+            if sig == 1 and self.balance >= 100 and self.usdt_balance < 500 and (datetime.now() - self.last_usdt_trade).total_seconds() > 600:
+                self.last_usdt_trade = datetime.now()
                 self.balance -= 100; self.usdt_balance += 100 / price
                 self.async_log(self.log_file, f"[USDT BUY] 100 BRL @ {price:.2f}"); self.save_balance(); self.save_state()
             elif sig == -1 and self.usdt_balance > 10:
                 self.balance += self.usdt_balance * price * 0.999
                 self.async_log(self.log_file, f"[USDT SELL] {self.usdt_balance:.2f} USDT @ {price:.2f}")
-                self.usdt_balance = 0; self.save_balance(); self.save_state()
+                self.usdt_balance = 0; self.last_usdt_trade = datetime.now(); self.save_balance(); self.save_state()
         return {"price": price, "rsi": metrics.get('rsi', 50), "balance": self.usdt_balance}
 
     def _process_xaut(self):
@@ -506,7 +510,11 @@ class ScoutBot:
                         (sig, prob, reason, price, rel, atr) = results[0]; (s_sig, s_prob, s_reason, _, _, _) = results[1]
                         
                         t_sigs = {'live': {'sig': sig, 'prob': prob}, 'shadow': {'sig': s_sig, 'prob': s_prob}, 'ancestral': {'sig': results[2][0], 'prob': results[2][1]}}
-                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=0.1, macro_status=self.macro_status)
+                        
+                        # 4. Consenso Externo (TradingView)
+                        tv_sig = await loop.run_in_executor(self.executor, self.tv_connector.get_technical_summary, asset)
+                        
+                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=0.1, macro_status=self.macro_status, tv_signal=tv_sig)
                         
                         with signals_lock:
                             asset_signals[asset] = {'signal': fsig, 'prob': fconf, 'reason': treason, 'price': price, 'reliability': rel, 'atr': atr, 'imbalance': imbalance}
@@ -517,21 +525,21 @@ class ScoutBot:
                 
                 if agent_res and 'decision' in agent_res:
                     for asset, s in asset_signals.items():
-                    active = self.positions.get(asset, [])
-                    rem = []
-                    for p in active:
-                        pnl = (s['price']/p['entry'] - 1) * p['signal'] if p['entry'] != 0 else 0.0
-                        act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD", atr_value=s.get('atr'))
-                        if act == 'SELL':
-                            if self.shadow_mode or p.get('is_shadow'):
-                                self.ledger.close_position(asset); self.notify_telegram(f"[SHADOW] FECHADO {asset}: {pnl:+.2%}")
-                            else:
-                                order = await self.limit_executor.execute_limit_order(asset, SIDE_SELL if p['signal']==1 else SIDE_BUY, p['qty'])
-                                if order:
-                                    self.balance += p['cost'] * (1 + pnl - 0.001); self.ledger.close_position(asset); self.save_balance()
-                                    self.notify_telegram(f"FECHADO {asset}: {pnl:+.2%}")
-                        else: rem.append(p)
-                    self.positions[asset] = rem
+                        active = self.positions.get(asset, [])
+                        rem = []
+                        for p in active:
+                            pnl = (s['price']/p['entry'] - 1) * p['signal'] if p['entry'] != 0 else 0.0
+                            act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD", atr_value=s.get('atr'))
+                            if act == 'SELL':
+                                if self.shadow_mode or p.get('is_shadow'):
+                                    self.ledger.close_position(asset); self.notify_telegram(f"[SHADOW] FECHADO {asset}: {pnl:+.2%}")
+                                else:
+                                    order = await self.limit_executor.execute_limit_order(asset, SIDE_SELL if p['signal']==1 else SIDE_BUY, p['qty'])
+                                    if order:
+                                        self.balance += p['cost'] * (1 + pnl - 0.001); self.ledger.close_position(asset); self.save_balance()
+                                        self.notify_telegram(f"FECHADO {asset}: {pnl:+.2%}")
+                            else: rem.append(p)
+                        self.positions[asset] = rem
 
                     if s['signal'] != 0 and not self.positions[asset]:
                         kelly = self.risk_manager.get_kelly_trade_amount(self.total_equity, s['prob'])

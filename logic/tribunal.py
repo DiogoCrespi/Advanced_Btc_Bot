@@ -7,7 +7,7 @@ class ConsensusTribunal:
         # Threshold de volatilidade para ativar Veto Ancestral
         self.veto_threshold = veto_threshold
 
-    def evaluate_signals(self, signals: dict, regime_metrics: dict, failure_risk: int = 0, macro_status: dict = None):
+    def evaluate_signals(self, signals: dict, regime_metrics: dict, failure_risk: int = 0, macro_status: dict = None, tv_signal: int = 0):
         """
         Avalia o conjunto de sinais e retorna a decisao final.
         
@@ -16,6 +16,7 @@ class ConsensusTribunal:
             regime_metrics: { 'vol': float, 'trend': float }
             failure_risk: Numero de falhas similares encontradas no Neo4j
             macro_status: { 'is_extreme': bool, 'reason': str }
+            tv_signal: Sinal vindo do TradingView-MCP (1, -1, 0)
             
         Returns:
             final_signal (int), confidence (float), reason (str)
@@ -53,6 +54,9 @@ class ConsensusTribunal:
 
         # 2. Votacao Ponderada (Consenso Majoritario)
         all_sigs = [live_sig, shadow_sig, ancestral_sig]
+        if tv_signal != 0:
+            all_sigs.append(tv_signal)
+            
         active_sigs = [s for s in all_sigs if s != 0]
         
         if not active_sigs:
@@ -64,19 +68,27 @@ class ConsensusTribunal:
         # Contagem de votos
         buy_votes = len([s for s in all_sigs if s == 1])
         sell_votes = len([s for s in all_sigs if s == -1])
+        total_active = len(active_sigs)
         
-        # Exige pelo menos 2 votos concordantes para um sinal forte
+        # Tag v3-Alpha se o modelo shadow participou do lado vencedor
+        v3_tag = " [v3-Alpha]" if shadow_sig != 0 else ""
+        
+        # Exige maioria ou suporte do TradingView
         if buy_votes >= 2:
-            conf = 1.0 if buy_votes == 3 else 0.7
-            return 1, conf, f"Consenso de Compra ({buy_votes}/3)"
+            conf = 0.9 if buy_votes >= 3 else 0.7
+            if tv_signal == 1: conf += 0.05 # Bônus de confirmação externa
+            if shadow_sig == 1 and live_sig == 1: conf += 0.05 # Bônus confluência interna
+            return 1, min(1.0, conf), f"Consenso de Compra ({buy_votes}/{total_active}){v3_tag}"
         elif sell_votes >= 2:
-            conf = 1.0 if sell_votes == 3 else 0.7
-            return -1, conf, f"Consenso de Venda ({sell_votes}/3)"
+            conf = 0.9 if sell_votes >= 3 else 0.7
+            if tv_signal == -1: conf += 0.05
+            if shadow_sig == -1 and live_sig == -1: conf += 0.05
+            return -1, min(1.0, conf), f"Consenso de Venda ({sell_votes}/{total_active}){v3_tag}"
             
-        # Se houver conflito total (1, -1, 0), prevalece a seguranca
-        if buy_votes == 1 and sell_votes == 1:
-            return 0, 0.2, "CONFLITO: Modelos divergem completamente"
-            
+        # Se apenas o TradingView sinalizou (e os outros sao 0), sinal exploratorio
+        if total_active == 1 and tv_signal != 0:
+            return tv_signal, 0.45, "Sinal Externo (TradingView)"
+
         # Se apenas 1 modelo votou (e os outros sao 0), sinal fraco
         if len(active_sigs) == 1:
             return active_sigs[0], 0.5, "Sinal Isolado (Sem Consenso)"

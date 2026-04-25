@@ -36,6 +36,7 @@ from logic.coingecko_client import CoinGeckoClient
 from logic.evolutionary_engine import EvolutionaryEngine, DNA
 from logic.feature_store import FeatureStore
 from logic.tribunal import ConsensusTribunal
+from logic.tv_connector import TVConnector
 from logic.risk_manager import RiskManager
 from logic.execution import BinanceLive, BinanceTestnet, BacktestEngine
 from logic.execution.limit_executor import LimitExecutor
@@ -228,6 +229,7 @@ class MulticoreMasterBot:
         self.oracle = LocalOracle(self.memory, self.oracle_state)
         self.cg_client = CoinGeckoClient()
         self.stats = {asset: {"oos_score": 0.0} for asset in assets}
+        self.tv_connector = TVConnector()
         self.risk_manager = RiskManager()
         self.ledger = Ledger()
         self.limit_executor = LimitExecutor(self.exchange)
@@ -276,6 +278,7 @@ class MulticoreMasterBot:
         self.total_equity = self.balance
         self.dashboard_logs = deque(maxlen=5)
         self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55) # Primeiro report em 5 min
+        self.last_usdt_trade = datetime.now() - timedelta(hours=1)
         
         print(f"[INIT] Booting Multicore Brains ({self.mode})...")
         os.makedirs("models", exist_ok=True)
@@ -531,7 +534,9 @@ class MulticoreMasterBot:
         sig, conf, reason, metrics = self.usdt_logic.get_signal(df, macro_risk)
         dec, areason = self.agent.assess_usdt_opportunity(sig, conf, reason)
         if dec == "APPROVE":
-            if sig == 1 and self.balance >= 100:
+            # Limita a compra de USDT para evitar spam no log e over-allocation (CUIDADO: Cooldown de 10 min e Teto de 500 USDT)
+            if sig == 1 and self.balance >= 100 and self.usdt_balance < 500 and (datetime.now() - self.last_usdt_trade).total_seconds() > 600:
+                self.last_usdt_trade = datetime.now()
                 self.balance -= 100
                 self.usdt_balance += 100 / price
                 self.async_log(self.log_file, f"[USDT BUY] BRL 100 -> {100/price:.2f} USDT @ {price:.2f}")
@@ -541,6 +546,7 @@ class MulticoreMasterBot:
                 self.balance += self.usdt_balance * price * 0.999
                 self.usdt_balance = 0
                 self.async_log(self.log_file, f"[USDT SELL] {old_usdt:.2f} USDT -> BRL @ {price:.2f}")
+                self.last_usdt_trade = datetime.now()
                 self.save_balance(); self.save_state()
         return {"price": price, "rsi": metrics.get('rsi', 50), "balance": self.usdt_balance}
 
@@ -582,31 +588,49 @@ class MulticoreMasterBot:
     async def _train_initial_evo_pop(self):
         loop = asyncio.get_running_loop()
         tasks = []
-        # 1. Train Main Brains
+        
+        # Carrega historico para treinamento maturado da evolucao
+        history_df = self.feature_store.load_history()
+
+        # 1. Train Main Brains (Somente se nao estiverem maturados)
         for asset in self.assets:
             brain = self.brains[asset]
-            df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
-            if not df.empty:
-                df = self.engine.apply_indicators(df)
-                tasks.append(loop.run_in_executor(self.executor, brain.train, df))
-        
-        # 2. Train Shadow Brains
-        for asset in self.assets:
-            brain = self.shadow_brains[asset]
-            df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
-            if not df.empty:
-                df = self.engine.apply_indicators(df)
-                tasks.append(loop.run_in_executor(self.executor, brain.train, df))
-
-        # 3. Train Evo Brains
-        for dna in self.evo_engine.population:
-            for asset in self.assets:
-                brain = self.evo_brains[dna.id][asset]
+            if not brain.is_trained or brain.n_samples < 2000:
                 df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
                 if not df.empty:
                     df = self.engine.apply_indicators(df)
                     tasks.append(loop.run_in_executor(self.executor, brain.train, df))
-        if tasks: await asyncio.gather(*tasks)
+        
+        # 2. Train Shadow Brains (Somente se nao estiverem maturados)
+        for asset in self.assets:
+            brain = self.shadow_brains[asset]
+            if not brain.is_trained or brain.n_samples < 2000:
+                df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
+                if not df.empty:
+                    df = self.engine.apply_indicators(df)
+                    tasks.append(loop.run_in_executor(self.executor, brain.train, df))
+
+        # 3. Train Evo Brains (Limitado ao Top 2 para reduzir carga de CPU no boot)
+        print(f"[INIT] Treinando Top 2 DNAs da Populacao Evolutiva ({len(self.assets)} ativos cada)...")
+        for dna in self.evo_engine.population[:2]: 
+            for asset in self.assets:
+                brain = self.evo_brains[dna.id][asset]
+                asset_history = history_df[history_df['symbol'] == asset] if not history_df.empty and 'symbol' in history_df.columns else pd.DataFrame()
+                
+                if not asset_history.empty and len(asset_history) > 500:
+                    asset_history = self.engine.apply_indicators(asset_history)
+                    # Treinamento sequencial para nao saturar CPU
+                    await loop.run_in_executor(self.executor, brain.train, asset_history)
+                    await asyncio.sleep(0.5) # Pequeno respiro para o event loop
+                else:
+                    # Fallback simplificado
+                    df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
+                    if not df.empty:
+                        df = self.engine.apply_indicators(df)
+                        await loop.run_in_executor(self.executor, brain.train, df)
+                        await asyncio.sleep(0.5)
+        
+        print("[INIT] Treinamento de background concluido.")
 
     def _dissect_trade_failure(self, s, label):
         try: self.memory.record_failed_state(metrics=s.get('metrics',{}), cause=label)
@@ -683,7 +707,7 @@ class MulticoreMasterBot:
                             for k, v in last_row.items():
                                 if "Timestamp" in str(type(v)): last_row[k] = v.isoformat()
                             payload = json.dumps({"asset": asset, "features": last_row, "imbalance": imbalance})
-                            self.udp_sock.sendto(payload, ("127.0.0.1", 5555))
+                            self.udp_sock.sendto(payload, ("btc_scout_bot", 5555))
                         except Exception as e:
                             print(f"[IPC ERROR] {e}")
     
@@ -699,13 +723,11 @@ class MulticoreMasterBot:
                             results = await asyncio.gather(*tasks)
                             (sig, prob, reason, price, rel, atr) = results[0]
                             (s_sig, s_prob, s_reason, _, _, _) = results[1]
-                            (a_sig, a_prob, _, _, _, _) = results[2]
                         else:
                             # AI Disabled: Neutral signals
                             price = float(df['close'].iloc[-1])
                             sig, prob, reason, rel, atr = 0, 0.5, "AI_DISABLED", 1.0, 0.0
                             s_sig, s_prob, s_reason = 0, 0.5, "AI_DISABLED"
-                            a_sig, a_prob = 0, 0.5
 
                         
                         # Logging Shadow Decision (PR #65)
@@ -713,12 +735,12 @@ class MulticoreMasterBot:
                             print(f"[SHADOW-v3] {asset}: Sinal {s_sig} | Prob: {s_prob:.1%} | Reason: {s_reason}")
                             self.memory.record_shadow_decision(asset, s_sig, s_prob, price, s_reason)
 
-                        t_sigs = {
-                            'live': {'sig': sig, 'prob': prob},
-                            'shadow': {'sig': s_sig, 'prob': s_prob},
-                            'ancestral': {'sig': a_sig, 'prob': a_prob}
-                        }
-                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status)
+                        t_sigs = {'live': {'sig': sig, 'prob': prob}, 'shadow': {'sig': s_sig, 'prob': s_prob}, 'ancestral': {'sig': results[2][0], 'prob': results[2][1]}}
+                        
+                        # 4. Consenso Externo (TradingView)
+                        tv_sig = await loop.run_in_executor(self.executor, self.tv_connector.get_technical_summary, asset)
+                        
+                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status, tv_signal=tv_sig)
                         
                         # PATCH: Se o sinal for isolado e vier do v3-Alpha, preservar a razao para o StrategistAgent
                         if "v3-Alpha" in s_reason and fsig == s_sig and "Sinal Isolado" in treason:

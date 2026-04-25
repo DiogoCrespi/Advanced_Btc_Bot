@@ -64,12 +64,13 @@ class MLBrain:
 
         
         # 3. Gating de Volatilidade (Rolling ATR Percentile)
-        # Calculamos o threshold baseados nas ultimas 1000 amostras do dataframe fornecido
+        # Calibrado com o percentil 5 (muito mais permissivo) para evitar falsos vetos
+        # em regimes de volatilidade normal/baixa frente ao historico de treinamento.
         if 'feat_atr_pct' in df.columns:
             historical_atr = df['feat_atr_pct'].tail(1000)
-            self.atr_threshold = historical_atr.quantile(0.20)
-            # Protecao: Nunca cair abaixo de um threshold minimo (ex: 0.1%)
-            self.atr_threshold = max(0.1, self.atr_threshold)
+            self.atr_threshold = historical_atr.quantile(0.05)
+            # Protecao: Nunca cair abaixo de um threshold absoluto minimo (0.05%)
+            self.atr_threshold = max(0.05, self.atr_threshold)
         
         # Dropamos NaNs (necessario para o RF)
         return df.dropna()
@@ -137,16 +138,25 @@ class MLBrain:
         """
         _tp = tp if tp is not None else (self.dna.params["tp"] if self.dna else 0.015)
         _sl = sl if sl is not None else (self.dna.params["sl"] if self.dna else 0.008)
-        _hz = horizon if horizon is not None else (self.dna.params["horizon"] if self.dna else 4)
+        _hz = horizon if horizon is not None else (self.dna.params["horizon"] if self.dna else 12) # v3-Alpha: Aumentado de 4 para 12
 
         data = self.prepare_features(df)
         
         # v3-Alpha: Gating no Treino (Opcional, mas Sandbox provou ser superior)
         if 'feat_atr_pct' in data.columns:
+            # Filtro de Volatilidade mais suave (30th percentile -> 15th percentile se necessario)
             self.atr_threshold = data['feat_atr_pct'].quantile(0.30)
-            data = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
+            data_filtered = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
+            
+            if len(data_filtered) < 1000:
+                print(f"[AVISO] Dataset insuficiente ({len(data_filtered)}) com 30th percentile. Usando 10th percentile...")
+                self.atr_threshold = data['feat_atr_pct'].quantile(0.10)
+                data = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
+            else:
+                data = data_filtered
+
             if len(data) < 500:
-                print(f"[AVISO] Dataset insuficiente apos filtro de regime ({len(data)} amostras). Ignorando filtro.")
+                print(f"[AVISO] Dataset criticamente curto ({len(data)}). Ignorando filtro de regime.")
                 self.atr_threshold = 0.0
                 data = self.prepare_features(df) # Recarrega sem filtro
 
@@ -219,7 +229,6 @@ class MLBrain:
         
         if curr_atr < self.atr_threshold:
             reason = f"VETO REGIME: Baixa Volatilidade ({curr_atr:.2f} < {self.atr_threshold:.2f})"
-            print(f"[ML-VETO] {reason}")
             return 0, 0.0, reason, self.reliability_score
 
         if len(current_features_row) != len(feature_names):

@@ -42,6 +42,8 @@ services:
     command: [ "python", "-u", "multicore_master_bot.py", "--mode", "backtest" ]
     volumes:
       - ./results:/app/results
+      - ./models:/app/models
+      - ./data:/app/data
     networks:
       - quant_net
 
@@ -64,6 +66,8 @@ services:
     command: [ "python", "-u", "scout_bot.py", "--mode", "backtest" ]
     volumes:
       - ./results:/app/results
+      - ./models:/app/models
+      - ./data:/app/data
     networks:
       - quant_net
 
