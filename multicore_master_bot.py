@@ -437,14 +437,25 @@ class MulticoreMasterBot:
         header += f"| Macro Risk Score: {self.macro_risk:.2f} | Recommendation: {m_msg} |\n"
         header += f"+{'-'*80}+\n"
         
-        # Portfolio
+        # Portfolio consolidado por ativo
         port_lines = []
         for asset, pos_list in self.positions.items():
-            for p in pos_list:
-                pnl = (asset_signals.get(asset,{}).get('price', p['entry']) / p['entry'] - 1) * p['signal']
-                port_lines.append(f"| {asset} ({p['signal']}): @ {p['entry']:,.2f} | PnL: {pnl:+.2%} |")
+            if not pos_list: continue
+            
+            total_cost = sum(p['cost'] for p in pos_list)
+            total_qty = sum(p['qty'] for p in pos_list)
+            avg_entry = total_cost / total_qty if total_qty > 0 else 0
+            curr_price = asset_signals.get(asset,{}).get('price', avg_entry)
+            signal = pos_list[0]['signal']
+            
+            total_pnl_pct = (curr_price / avg_entry - 1) * signal if avg_entry > 0 else 0
+            total_val = total_cost * (1 + total_pnl_pct)
+            
+            total_pnl_nominal = total_val - total_cost
+            pyramid_info = f"[x{len(pos_list)}]" if len(pos_list) > 1 else "    "
+            port_lines.append(f"| {asset:8} {pyramid_info:4} ({signal:2}) @{avg_entry:9.1f} | Val: R${total_val:8.2f} | PnL:{total_pnl_pct:+6.2%} ({total_pnl_nominal:+6.2f}) |")
         
-        portfolio = f"| [PORTFOLIO] Ativos em Carteira ({len(port_lines)}): |\n"
+        portfolio = f"| [PORTFOLIO] Ativos Consolidados ({len(port_lines)}): {' '*37} |\n"
         portfolio += f"+{'-'*80}+\n"
         for pl in port_lines: portfolio += pl + "\n"
         if not port_lines: portfolio += "| Nenhuma posicao aberta no momento. |\n"
@@ -699,18 +710,9 @@ class MulticoreMasterBot:
 
                         # Fetch live market microstructure (PR #60) - VETO Logic
                         imbalance = await loop.run_in_executor(self.executor, self.engine.fetch_order_book_imbalance, asset)
+                        
+                        # (IPC Broadcast to Scout Bot removed - Architecture Unified)
 
-                        # IPC Broadcast para o Batedor (Scout)
-                        try:
-                            last_row = df.iloc[-1].to_dict()
-                            # Converter timestamps etc
-                            for k, v in last_row.items():
-                                if "Timestamp" in str(type(v)): last_row[k] = v.isoformat()
-                            payload = json.dumps({"asset": asset, "features": last_row, "imbalance": imbalance})
-                            self.udp_sock.sendto(payload, ("btc_scout_bot", 5555))
-                        except Exception as e:
-                            print(f"[IPC ERROR] {e}")
-    
 
                         # Parallelize predictions across ProcessPoolExecutor
                         if self.enable_ai:
@@ -735,7 +737,7 @@ class MulticoreMasterBot:
                             print(f"[SHADOW-v3] {asset}: Sinal {s_sig} | Prob: {s_prob:.1%} | Reason: {s_reason}")
                             self.memory.record_shadow_decision(asset, s_sig, s_prob, price, s_reason)
 
-                        t_sigs = {'live': {'sig': sig, 'prob': prob}, 'shadow': {'sig': s_sig, 'prob': s_prob}, 'ancestral': {'sig': results[2][0], 'prob': results[2][1]}}
+                        t_sigs = {'live': {'sig': sig, 'prob': prob, 'reason': reason}, 'shadow': {'sig': s_sig, 'prob': s_prob, 'reason': s_reason}, 'ancestral': {'sig': results[2][0], 'prob': results[2][1]}}
                         
                         # 4. Consenso Externo (TradingView)
                         tv_sig = await loop.run_in_executor(self.executor, self.tv_connector.get_technical_summary, asset)
@@ -806,8 +808,11 @@ class MulticoreMasterBot:
                         act, r_reason = self.risk_manager.check_exit_conditions(asset, p.get('id','0'), s['price'], p['entry'], p['signal'], "HOLD", atr_value=s.get('atr'))
                         if exit_r or act == 'SELL':
                             if self.shadow_mode or is_p_shadow:
-                                # Shadow Settlement
-                                self.logger.info(f"[SHADOW] Liquidando {asset} @ {s['price']} ({pnl:+.2%})")
+                                # Shadow Settlement - Restore capital + simulated PnL
+                                returned = p['cost'] * (1 + pnl - 0.001)  # fee simulada de 0.1%
+                                self.balance += returned
+                                self.save_balance()
+                                print(f"[SHADOW] Liquidando {asset} @ {s['price']} ({pnl:+.2%}) | Retorno: R$ {returned:.2f}")
                                 self.ledger.close_position(asset)
                                 self.ledger.record_completed_trade(asset, "SELL" if p['signal']==1 else "BUY", p['entry'], s['price'], p['qty'], pnl, p['cost']*pnl, p['time'], exit_r or r_reason, is_shadow=True)
                                 self.memory.settle_shadow_outcome(p.get('did'), s['price'], pnl)
@@ -816,7 +821,7 @@ class MulticoreMasterBot:
                                 # Real Execution
                                 qty = p['qty']
                                 side = SIDE_SELL if p['signal'] == 1 else SIDE_BUY
-                                self.logger.info(f"[EXEC] Saindo de {asset} via Limit Order...")
+                                print(f"[EXEC] Saindo de {asset} via Limit Order...")
                                 order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                 if order:
                                     final_price = float(order.get('price', s['price']))
@@ -831,69 +836,91 @@ class MulticoreMasterBot:
                         else: rem.append(p)
                     self.positions[asset] = rem
 
-                    # Entries
-                    if s['signal'] != 0 and len(self.positions[asset]) < 1:
+                    # Entries — suporta Pyramiding (ate 3 aportes por ativo na mesma direcao)
+                    MAX_PYRAMID = 3
+                    existing = self.positions[asset]
+                    existing_signal = existing[0]['signal'] if existing else None
+                    same_direction = (existing_signal == s['signal']) if existing_signal else True
+                    can_pyramid = (
+                        len(existing) < MAX_PYRAMID and          # Limite de aportes
+                        same_direction and                        # Mesma direcao
+                        s['prob'] >= 0.75 and                    # Apenas em alta conviccao
+                        len(existing) > 0                        # So aponta se ja tem posicao
+                    )
+                    allow_entry = (s['signal'] != 0) and (len(existing) == 0 or can_pyramid)
+
+                    if allow_entry:
+                        if can_pyramid:
+                            print(f"[PYRAMID] {asset}: Adicionando aporte #{len(existing)+1} (Sinal: {s['signal']} | Prob: {s['prob']:.1%})")
                         h_pct = self.risk_manager.calculate_bunker_allocation(self.macro_risk)
                         avail = 0.1 if (is_extreme and asset=="BTCBRL") else (0.0 if is_extreme else (1.0 - h_pct))
                         # Use internal model probability (s['prob']) for Kelly instead of hardcoded 0.5
                         kelly = self.risk_manager.get_kelly_trade_amount(self.total_equity, s['prob'])
                         sizing = kelly * s['conviction'] * avail
                         
-                        if sizing >= 10 and self.balance >= sizing:
-                            # Injected reliability and caution logic
-                            # 4. Hybrid Entry Logic (Shadow Mode vs Real Entry)
-                            dec, ar, smod = self.agent.assess_trade(
-                                asset, s['signal'], s['prob'], s['reason'], 
-                                reliability=s.get('reliability', 1.0), 
-                                caution_mode=self.caution_mode,
-                                book_imbalance=s.get('imbalance', 0.0)
-                            )
+                        # 4. Hybrid Entry Logic (Shadow Mode vs Real Entry)
+                        dec, ar, smod = self.agent.assess_trade(
+                            asset, s['signal'], s['prob'], s['reason'], 
+                            reliability=s.get('reliability', 1.0), 
+                            caution_mode=self.caution_mode,
+                            book_imbalance=s.get('imbalance', 0.0)
+                        )
+                        
+                        # Tiered Sizing Logic (Unificacao Scout + Master)
+                        if dec == "APPROVE_SCOUT":
+                            sizing = 10.0 # Batedor (Testando as aguas com minimo)
+                        elif dec == "APPROVE_SNIPER":
+                            # Sniper (Agressivo, confia no modelo. Usa Kelly, mas com piso e teto)
+                            sizing = max(sizing, 50.0)   # Pelo menos R$ 50
+                            sizing = min(sizing, 200.0)  # Teto de R$ 200
                             
+                        if dec.startswith("APPROVE") and sizing >= 10 and self.balance >= sizing:
                             # Per-model shadow (Observation) vs Bot-wide shadow mode
                             model_shadow = s.get('status') == "OBSERVATION"
                             
-                            if dec == "APPROVE":
-                                if model_shadow:
-                                    print(f"👻 [SHADOW-OBS] {asset}: Entrada simulada (Maturidade Insuficiente).")
-                                    self.memory.record_context_and_decision(news_sent, self.macro_risk, f"SHADOW_ALPHA_{asset}_{s['signal']}")
-                                elif self.shadow_mode:
-                                    # Global Shadow Mode
-                                    side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
-                                    qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                    self.logger.info(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']}")
-                                    did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
+                            if model_shadow:
+                                print(f"👻 [SHADOW-OBS] {asset}: Entrada simulada (Maturidade Insuficiente).")
+                                self.memory.record_context_and_decision(news_sent, self.macro_risk, f"SHADOW_ALPHA_{asset}_{s['signal']}")
+                            elif self.shadow_mode:
+                                # Global Shadow Mode - Deduct capital to enforce real balance limits
+                                side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
+                                qty = await self.format_quantity_async(asset, sizing / s['price'])
+                                self.balance -= sizing  # Simula o custo da posicao
+                                self.save_balance()
+                                print(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']} | Custo: R$ {sizing:.2f} | Saldo: R$ {self.balance:.2f}")
+                                did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
+                                pos_data = {
+                                    "entry": s['price'], "signal": s['signal'], "qty": qty, 
+                                    "cost": sizing, "time": datetime.now().isoformat(), "did": did, "is_shadow": True
+                                }
+                                self.positions[asset].append(pos_data)
+                                self.ledger.save_active_position(asset, pos_data, is_shadow=True)
+                                self.notify_telegram(f"[SHADOW] ABERTO {asset}: {side} @ {s['price']} | R$ {sizing:.2f}")
+                            else:
+                                # Real Entry
+                                side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
+                                qty = await self.format_quantity_async(asset, sizing / s['price'])
+                                print(f"[EXEC] Entrando em {asset} via Limit Order...")
+                                order = await self.limit_executor.execute_limit_order(asset, side, qty)
+                                if order:
+                                    actual_price = float(order.get('price', s['price']))
+                                    actual_sizing = qty * actual_price
+                                    self.balance -= actual_sizing
                                     pos_data = {
-                                        "entry": s['price'], "signal": s['signal'], "qty": qty, 
-                                        "cost": sizing, "time": datetime.now().isoformat(), "did": did, "is_shadow": True
+                                        "entry": actual_price, "signal": s['signal'], "qty": qty, 
+                                        "cost": actual_sizing, "time": datetime.now().isoformat(),
+                                        "order_id": order.get('orderId'), "is_shadow": False
                                     }
                                     self.positions[asset].append(pos_data)
-                                    self.ledger.save_active_position(asset, pos_data, is_shadow=True)
-                                    self.notify_telegram(f"[SHADOW] ABERTO {asset}: {side} @ {s['price']}")
-                                else:
-                                    # Real Entry
-                                    side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
-                                    qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                    self.logger.info(f"[EXEC] Entrando em {asset} via Limit Order...")
-                                    order = await self.limit_executor.execute_limit_order(asset, side, qty)
-                                    if order:
-                                        actual_price = float(order.get('price', s['price']))
-                                        actual_sizing = qty * actual_price
-                                        self.balance -= actual_sizing
-                                        pos_data = {
-                                            "entry": actual_price, "signal": s['signal'], "qty": qty, 
-                                            "cost": actual_sizing, "time": datetime.now().isoformat(),
-                                            "order_id": order.get('orderId'), "is_shadow": False
-                                        }
-                                        self.positions[asset].append(pos_data)
-                                        self.ledger.save_active_position(asset, pos_data)
-                                        self.memory.record_trade(asset, side, qty, actual_price)
-                                        self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
-                                        self.save_balance(); self.save_state()
+                                    self.ledger.save_active_position(asset, pos_data)
+                                    self.memory.record_trade(asset, side, qty, actual_price)
+                                    self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
+                                    self.save_balance(); self.save_state()
 
-                            else:
-                                print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
                         else:
-                            if sizing < 10 and sizing > 0:
+                            if not dec.startswith("APPROVE"):
+                                print(f"[STRATEGIST] Rejeitado {asset}: {ar}")
+                            elif sizing < 10 and sizing > 0:
                                 print(f"[RISK] {asset}: Sizing insuficiente (R$ {sizing:.2f} < 10.00)")
                             elif self.balance < sizing:
                                 print(f"[RISK] {asset}: Saldo insuficiente (R$ {self.balance:.2f} < {sizing:.2f})")

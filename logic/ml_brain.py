@@ -227,9 +227,9 @@ class MLBrain:
         feats = dict(zip(feature_names, current_features_row))
         curr_atr = feats.get('feat_atr_pct', 0.0)
         
+        low_vol_tag = ""
         if curr_atr < self.atr_threshold:
-            reason = f"VETO REGIME: Baixa Volatilidade ({curr_atr:.2f} < {self.atr_threshold:.2f})"
-            return 0, 0.0, reason, self.reliability_score
+            low_vol_tag = " [LOW_VOL]"
 
         if len(current_features_row) != len(feature_names):
              return 0, 0.0, "Feature mismatch", 0.0
@@ -248,9 +248,9 @@ class MLBrain:
         _min_conf = self.dna.params["min_confidence"] if self.dna else min_confidence
 
         if max_prob < _min_conf:
-            return 0, max_prob, f"Baixa Conviccao ({max_prob:.1%})", self.reliability_score
+            return 0, max_prob, f"Baixa Conviccao ({max_prob:.1%}){low_vol_tag}", self.reliability_score
         
-        return pred_class, max_prob, "Breakout v3-Alpha", self.reliability_score
+        return pred_class, max_prob, f"Breakout v3-Alpha{low_vol_tag}", self.reliability_score
 
     def save_model(self, path="models/brain_rf_v3_alpha.pkl"):
         os.makedirs(os.path.dirname(path), exist_ok=True)

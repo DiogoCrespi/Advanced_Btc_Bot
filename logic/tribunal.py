@@ -60,10 +60,13 @@ class ConsensusTribunal:
         active_sigs = [s for s in all_sigs if s != 0]
         
         if not active_sigs:
-            # Fallback for visibility: use live prob even if signal is 0
+            # Fallback for visibility: use live prob and preserve veto reason
             live_info = signals.get('live') or {}
             live_prob = live_info.get('prob', 0.0)
-            return 0, live_prob, "Consenso: Neutro"
+            live_reason = live_info.get('reason', 'Consenso: Neutro')
+            if "VETO" not in live_reason:
+                live_reason = "Consenso: Neutro"
+            return 0, live_prob, live_reason
             
         # Contagem de votos
         buy_votes = len([s for s in all_sigs if s == 1])

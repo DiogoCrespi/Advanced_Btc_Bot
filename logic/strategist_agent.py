@@ -147,7 +147,14 @@ class StrategistAgent:
         if self.radar.risk_score < 0.3 and signal == 1:
             return "REJECT", "Macro Risk Off (No Longs)", modifiers
             
-        return "APPROVE", f"Aprovado: {reason}", modifiers
+        # 5. Classificacao Scout vs Sniper (Tiered Execution)
+        # Ousado (Scout): Modelos experimentais, v3-Alpha inicial, probabilidades intermediarias ou baixa volatilidade
+        is_scout = (reliability < 0.5) or (probability < 0.65) or ("[LOW_VOL]" in reason)
+        
+        decision = "APPROVE_SCOUT" if is_scout else "APPROVE_SNIPER"
+        tag = "[SCOUT]" if is_scout else "[SNIPER]"
+        
+        return decision, f"Aprovado {tag}: {reason}", modifiers
 
     def run(self, signals: Dict[str, float], macro_data: Dict[str, float]):
         initial_state = {
