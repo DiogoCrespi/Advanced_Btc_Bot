@@ -117,12 +117,17 @@ class StrategyOptimizer:
             pnl_history.append(equity)
 
         total_return = equity - 1
-        max_dd = 0
-        peak = 1.0
-        for p in pnl_history:
-            if p > peak: peak = p
-            dd = (peak - p) / peak
-            if dd > max_dd: max_dd = dd
+
+        # BOLT OPTIMIZATION: Replaced Python loop with vectorized numpy operations for Max DD
+        pnls = np.array(pnl_history)
+        if len(pnls) > 0:
+            # Important: The initial equity is 1.0, so the peak can never be less than 1.0 initially
+            peaks = np.maximum(np.maximum.accumulate(pnls), 1.0)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                dds = np.where(peaks == 0, 0.0, (peaks - pnls) / peaks)
+            max_dd = float(np.max(dds))
+        else:
+            max_dd = 0.0
             
         return total_return, max_dd
 
