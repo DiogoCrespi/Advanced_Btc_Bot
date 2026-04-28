@@ -57,7 +57,7 @@ def main():
     df = pd.concat(all_dfs).sort_index()
     # Converte colunas para numerico (DataEngine espera isso)
     cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']
-    df[cols] = df[cols].apply(pd.to_numeric)
+    df[cols] = df[cols].astype(float)
     
     print(f"[*] Aplicando indicadores e saneamento...")
     df = engine.apply_indicators(df)
