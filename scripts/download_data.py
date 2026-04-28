@@ -30,7 +30,7 @@ async def fetch_historical_data(symbol: str, interval: str, start_str: str, end_
 
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_asset_volume']
-    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
+    df[numeric_cols] = df[numeric_cols].astype(float)
     df.set_index('open_time', inplace=True)
     
     # Calcular base CVD (Cumulative Volume Delta) similar ao data_engine nativo
