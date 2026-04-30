@@ -17,3 +17,4 @@ outputs/
 .ipynb_checkpoints
 .venv_new/
 .gitnexus
+.venv_local/
