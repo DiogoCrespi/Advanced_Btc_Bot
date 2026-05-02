@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
     depends_on:
       neo4j:
-        condition: service_started
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -39,13 +39,17 @@ services:
       - NEO4J_PASSWORD=password
       - OLLAMA_URL=http://ollama:11434/api/generate
       - SHADOW_MODE=True
-    command: [ "python", "-u", "multicore_master_bot.py", "--mode", "backtest" ]
+    command: [ "python", "-u", "multicore_master_bot.py", "--mode", "live" ]
     volumes:
       - ./results:/app/results
       - ./models:/app/models
       - ./data:/app/data
     networks:
       - quant_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
 
   # 3. Market Memory Graph (Neo4j)
   neo4j:
@@ -58,6 +62,8 @@ services:
       - "7687:7687" # Bolt Driver
     environment:
       - NEO4J_AUTH=neo4j/password
+      - NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
+      - NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
       retries: 5
@@ -67,6 +73,8 @@ services:
       - ./data/neo4j/logs:/logs
     networks:
       - quant_net
+    dns:
+      - 8.8.8.8
 
   # 4. Observatorio Tatico de Logs
   dozzle:
@@ -89,6 +97,8 @@ services:
       - ./data/ollama:/root/.ollama
     networks:
       - quant_net
+    dns:
+      - 8.8.8.8
     deploy:
       resources:
         limits:

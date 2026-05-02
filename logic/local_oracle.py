@@ -37,6 +37,7 @@ class LocalOracle:
             self.api_keys.append({"provider": "ollama", "key": "none", "model": "phi3:mini"})
             
         self.current_key_idx = 0
+        self.sentiment_cache = {"sentiment": "Neutral", "confidence": 0.5, "multiplier": 1.0}
 
     async def start_loop(self):
         """Loop infinito assincrono (Background)."""
@@ -102,28 +103,30 @@ class LocalOracle:
         
         results = await asyncio.gather(*tasks)
 
-        # Tratar resultados
-        scores = []
-        for res in results:
-            score = self._extract_score(res)
-            scores.append(score)
-            
-        avg_score = sum(scores) / len(scores) if scores else 0.0
+        if not any(results):
+            # Se tudo falhar, usamos o cache para nao deixar o bot cego
+            self.state["sentiment"] = self.sentiment_cache["sentiment"]
+            self.state["confidence"] = self.sentiment_cache["confidence"]
+            self.state["multiplier"] = self.sentiment_cache["multiplier"]
+            logger.warning("[ORACLE] Usando cache de sentimento (Todas as APIs falharam).")
+        else:
+            # Tratar resultados
+            scores = [self._extract_score(res) for res in results if res]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
 
-        sentiment = "Neutral"
-        if avg_score > 0.2:
-            sentiment = "Bullish"
-        elif avg_score < -0.2:
-            sentiment = "Bearish"
+            sentiment = "Neutral"
+            if avg_score > 0.2: sentiment = "Bullish"
+            elif avg_score < -0.2: sentiment = "Bearish"
             
-        confidence = min(0.95, abs(avg_score))
-        multiplier = 1.0 + (avg_score * 0.5)  # Se bull, 1.X, se bear, reduz exposição
+            confidence = min(0.95, abs(avg_score))
+            multiplier = 1.0 + (avg_score * 0.5)
 
-        # Atualiza o Estado Compartilhado DE FORMA ATOMICA/INSTANTANEA
-        # O Bot Master apenas lerá este dicionario, sem saber quando ou como foi atualizado
-        self.state["sentiment"] = sentiment
-        self.state["confidence"] = confidence
-        self.state["multiplier"] = multiplier
+            # Atualiza Cache e Estado
+            self.sentiment_cache = {"sentiment": sentiment, "confidence": confidence, "multiplier": multiplier}
+            self.state["sentiment"] = sentiment
+            self.state["confidence"] = confidence
+            self.state["multiplier"] = multiplier
+        
         self.state["last_oracle_update"] = datetime.now().strftime('%H:%M:%S')
 
     def _query_llm(self, prompt: str) -> str:

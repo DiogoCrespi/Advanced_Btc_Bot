@@ -112,8 +112,8 @@ class MarketMemory:
             print(f"[MEMORY] Erro ao consultar historico: {e}")
             return 0.5
 
-    def record_shadow_decision(self, asset: str, side: str, price: float, prob: float, metrics: dict):
-        """Registra uma decisao de Shadow Trading no grafo."""
+    def record_shadow_decision(self, asset: str, side: str, price: float, prob: float, metrics: dict, tv_signal: int = 0):
+        """Registra uma decisao de Shadow Trading no grafo com telemetria de reconciliacao."""
         if not self.driver: return None
         
         query = """
@@ -121,10 +121,12 @@ class MarketMemory:
         CREATE (d:Decision {
             type: 'SHADOW_ALPHA',
             side: $side,
-            price: $price,
+            signal_price: $price,
+            theo_tp: $tp,
+            theo_sl: $sl,
+            theo_horizon: $hz,
             prob: $prob,
-            volatility: $vol,
-            trend: $trend,
+            reason: $reason,
             timestamp: $ts
         })
         MERGE (d)-[:TARGETS]->(a)
@@ -132,30 +134,35 @@ class MarketMemory:
         """
         try:
             with self.driver.session() as session:
-                result = session.run(query, asset=asset, side=side, price=price, prob=prob, 
-                                   vol=metrics.get('vol', 0), trend=metrics.get('trend', 0), 
+                result = session.run(query, 
+                                   asset=asset, side=side, price=price, prob=prob, 
+                                   tp=metrics.get('tp', 0.015), sl=metrics.get('sl', 0.008),
+                                   hz=metrics.get('horizon', 4),
+                                   reason=metrics.get('reason', ''),
                                    ts=datetime.now().isoformat()).single()
                 return result["did"] if result else None
         except Exception as e:
             print(f"[MEMORY] Erro ao gravar Shadow Decision: {e}")
             return None
 
-    def settle_shadow_outcome(self, decision_id: str, exit_price: float, pnl_pct: float):
-        """Liquida uma decisao de Shadow Trading com seu resultado real."""
+    def settle_shadow_outcome(self, decision_id: str, exit_price: float, pnl_pct: float, reason: str = "TP"):
+        """Liquida uma decisao reconciliando o PnL Real vs Teorico e o motivo da saida."""
         if not self.driver or not decision_id: return
         
         query = """
         MATCH (d:Decision) WHERE elementId(d) = $did
         CREATE (o:Outcome {
-            pnl: $pnl,
-            exit_price: $exit,
+            pnl_real: $pnl,
+            actual_exit_price: $exit,
+            exit_reason: $reason,
             timestamp: $ts
         })
         MERGE (o)-[:FOLLOWED]->(d)
         """
         try:
             with self.driver.session() as session:
-                session.run(query, did=decision_id, pnl=pnl_pct, exit=exit_price, ts=datetime.now().isoformat())
+                session.run(query, did=decision_id, pnl=pnl_pct, exit=exit_price, 
+                           reason=reason, ts=datetime.now().isoformat())
         except Exception as e:
             print(f"[MEMORY] Erro ao liquidar Shadow Outcome: {e}")
 

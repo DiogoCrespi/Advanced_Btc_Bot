@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
+from sklearn.preprocessing import RobustScaler
 
 class MLBrain:
     """
@@ -32,47 +33,77 @@ class MLBrain:
         self.feature_cols = []
         self.n_samples = 0
         self.reliability_score = 0.0
+        self.profit_factor = 0.0
         self.atr_threshold = 0.0 # Rolling Threshold v3
-        self.status = "OBSERVATION" # Status inicial: OBSERVATION ou LIVE
+        self.scaler = RobustScaler()
+        self.status = "OBSERVATION" # Status inicial
 
 
     def prepare_features(self, df):
         """
-        Ingestão Dinâmica refatorada (v3-Alpha).
-        Implementa Gating de Volatilidade e saneamento de features.
+        Engenharia de Features Centralizada (v3-Alpha).
+        Unifica indicadores técnicos, microestrutura e codificação temporal.
         """
         df = df.copy()
+        cl = 'close' if 'close' in df.columns else 'Close'
+        hi = 'high' if 'high' in df.columns else 'High'
+        lo = 'low' if 'low' in df.columns else 'Low'
         
-        # 1. Macro & Dominance
+        # 1. Macro & Ciclos
         df['feat_macro_risk'] = df.get('macro_risk', 0.5)
         df['feat_btc_dominance'] = df.get('btc_dominance', 50.0)
         
-        # 2. Codificacao Temporal Ciclica (Sin/Cos)
+        # 2. Codificação Temporal
         try:
             from logic.features import TemporalEncoder
             df = TemporalEncoder.apply(df)
-        except ImportError:
-            pass
+        except Exception: pass
 
-        # 3. Order Flow (PR #60/61 + Local Div)
-        if 'feat_cvd_4h' not in df.columns: df['feat_cvd_4h'] = 0.0
-        if 'feat_cvd_8h' not in df.columns: df['feat_cvd_8h'] = 0.0
-        if 'feat_delta' not in df.columns: df['feat_delta'] = 0.0
-        if 'cvd_div' in df.columns: df['feat_cvd_div'] = df['cvd_div']
-        if 'sweep_high' in df.columns: df['feat_sweep_high'] = df['sweep_high']
-        if 'sweep_low' in df.columns: df['feat_sweep_low'] = df['sweep_low']
+        # 3. Indicadores Técnicos (Calculados internamente para evitar NaNs externos)
+        def add_ind(dt, p, l, suf):
+            # MACD
+            ema_f = dt[p].ewm(span=12*l, adjust=False).mean()
+            ema_s = dt[p].ewm(span=26*l, adjust=False).mean()
+            dt[f'feat_macd_{suf}'] = ema_f - ema_s
+            # RSI
+            delta = dt[p].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14*l).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14*l).mean()
+            rs = gain / loss.replace(0, np.nan)
+            dt[f'feat_rsi_{suf}'] = 100 - (100 / (1 + rs))
+            # Bollinger
+            sma = dt[p].rolling(window=20*l).mean()
+            std = dt[p].rolling(window=20*l).std()
+            dt[f'feat_bb_dist_{suf}'] = (dt[p] - sma) / (std.replace(0, np.nan))
 
+        for scale, mult in [('1h', 1), ('4h', 4), ('1d', 24)]:
+            add_ind(df, cl, mult, scale)
+
+        # 4. Volatilidade e ATR (v3-Alpha)
+        df['feat_atr_1h'] = (df[hi] - df[lo]).rolling(window=14).mean()
+        df['feat_vol_norm'] = df[cl].pct_change().rolling(window=20).std()
         
-        # 3. Gating de Volatilidade (Rolling ATR Percentile)
-        # Calibrado com o percentil 5 (muito mais permissivo) para evitar falsos vetos
-        # em regimes de volatilidade normal/baixa frente ao historico de treinamento.
-        if 'feat_atr_pct' in df.columns:
-            historical_atr = df['feat_atr_pct'].tail(1000)
-            self.atr_threshold = historical_atr.quantile(0.05)
-            # Protecao: Nunca cair abaixo de um threshold absoluto minimo (0.05%)
-            self.atr_threshold = max(0.05, self.atr_threshold)
+        # 5. Order Flow (Resiliente)
+        if 'taker_buy_base_volume' in df.columns:
+            df['taker_buy_volume'] = df['taker_buy_base_volume']
+            from logic.order_flow_logic import OrderFlowLogic
+            df = OrderFlowLogic().calculate_delta_features(df)
         
-        # Dropamos NaNs (necessario para o RF)
+        # 6. Volume Shocks
+        avg_vol = df['volume'].rolling(window=50).mean()
+        df['feat_vol_shock'] = df['volume'] / avg_vol.replace(0, 1)
+
+        # 7. Estacionariedade (Log-Returns Normalizados)
+        for col in [cl, hi, lo]:
+            ret = np.log(df[col]).diff()
+            df[f'feat_{col.lower()}_ret'] = ret
+            # Normalizacao pela volatilidade rolante (Z-Score adaptativo)
+            df[f'feat_{col.lower()}_ret_norm'] = ret / (df['feat_vol_norm'].replace(0, 1e-6))
+
+        # 8. Saneamento (ffill para preservar histórico, dropna para NaNs de lookback)
+        flow_cols = [c for c in df.columns if 'delta' in c or 'cvd' in c]
+        df[flow_cols] = df[flow_cols].fillna(0)
+        df = df.ffill().fillna(0)
         return df.dropna()
 
     def create_labels(self, df, tp=0.015, sl=0.008, horizon=4):
@@ -132,74 +163,83 @@ class MLBrain:
 
         return labels
 
-    def train(self, df, train_full=False, tp=None, sl=None, horizon=None):
+    def train(self, df=None, train_full=False, tp=None, sl=None, horizon=None, X_custom=None, y_custom=None):
         """
-        Treina o cerebro de ML com alinhamento e filtros v3-Alpha.
+        Treina o cerebro de ML com alinhamento v3-Alpha e Walk-Forward Validation (Purged).
+        Suporta injecao de dados pre-processados para evitar redundancia e vazamento.
         """
-        _tp = tp if tp is not None else (self.dna.params["tp"] if self.dna else 0.015)
-        _sl = sl if sl is not None else (self.dna.params["sl"] if self.dna else 0.008)
-        _hz = horizon if horizon is not None else (self.dna.params["horizon"] if self.dna else 12) # v3-Alpha: Aumentado de 4 para 12
-
-        data = self.prepare_features(df)
+        _hz = horizon if horizon is not None else (self.dna.params["horizon"] if self.dna else 12)
         
-        # v3-Alpha: Gating no Treino (Opcional, mas Sandbox provou ser superior)
-        if 'feat_atr_pct' in data.columns:
-            # Filtro de Volatilidade mais suave (30th percentile -> 15th percentile se necessario)
-            self.atr_threshold = data['feat_atr_pct'].quantile(0.30)
-            data_filtered = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
+        if X_custom is not None and y_custom is not None:
+            X, y = X_custom, y_custom
+            self.feature_cols = [f"feat_{i}" for i in range(X.shape[1])] # Fallback names
+        else:
+            if df is None: return False
+            data = self.prepare_features(df)
             
-            if len(data_filtered) < 1000:
-                print(f"[AVISO] Dataset insuficiente ({len(data_filtered)}) com 30th percentile. Usando 10th percentile...")
-                self.atr_threshold = data['feat_atr_pct'].quantile(0.10)
-                data = data[data['feat_atr_pct'] >= self.atr_threshold].copy()
-            else:
-                data = data_filtered
+            # Identifica features
+            self.feature_cols = [c for c in data.columns if c.startswith('feat_') and 'imbalance' not in c]
+            X_all = data[self.feature_cols].values
+            y_all = self.create_labels(data, horizon=_hz)
+            
+            min_len = min(len(X_all), len(y_all))
+            X = X_all[:min_len]; y = y_all[:min_len]
+        
+        if len(X) < 100 or len(np.unique(y)) < 2: return False
 
-            if len(data) < 500:
-                print(f"[AVISO] Dataset criticamente curto ({len(data)}). Ignorando filtro de regime.")
-                self.atr_threshold = 0.0
-                data = self.prepare_features(df) # Recarrega sem filtro
+        # --- Walk-Forward Validation com Purga (Embargo) ---
+        # Substitui o split ingenuo 80/20 por janelas sequenciais seguras
+        n_splits = 5
+        step = len(X) // (n_splits + 1)
+        scores = []
+        
+        for i in range(1, n_splits + 1):
+            train_end = i * step
+            test_start = train_end + _hz + 10 # Gap de Purga (horizonte + margem)
+            test_end = test_start + step
+            
+            if test_end > len(X): break
+            
+            
+            X_train_fold, y_train_fold = X[:train_end], y[:train_end]
+            X_test_fold, y_test_fold = X[test_start:test_end], y[test_start:test_end]
+            
+            if len(X_test_fold) > 0:
+                # Isolamento In-Sample: Scaler treina apenas no passado (treino)
+                fold_scaler = RobustScaler()
+                X_train_scaled = fold_scaler.fit_transform(X_train_fold)
+                X_test_scaled = fold_scaler.transform(X_test_fold)
+                
+                self.model.fit(X_train_scaled, y_train_fold)
+                scores.append(self.model.score(X_test_scaled, y_test_fold))
 
-        self.feature_cols = [c for c in data.columns if c.startswith('feat_') and 'bb_u' not in c and 'bb_m' not in c and 'bb_l' not in c]
-        X_all = data[self.feature_cols].values
-        y_all = self.create_labels(data, tp=_tp, sl=_sl, horizon=_hz)
+        final_score = np.mean(scores) if scores else 0.0
         
-        min_len = min(len(X_all), len(y_all))
-        X = X_all[:min_len]
-        y = y_all[:min_len]
-        
-        if len(np.unique(y)) < 2:
-            print("Insufficient label diversity to train ML Brain v3.")
-            return False
+        # --- Calculo de Profit Factor OOS (Simulado no Test Fold Final) ---
+        pf_oos = 1.0
+        if scores:
+            # Simula no ultimo fold de teste para estimar PF
+            X_test_final = X[test_start:test_end]
+            y_test_final = y[test_start:test_end]
+            if len(X_test_final) > 0:
+                y_pred = self.model.predict(fold_scaler.transform(X_test_final))
+                wins = np.sum((y_pred == y_test_final) & (y_test_final != 0))
+                losses = np.sum((y_pred != y_test_final) & (y_pred != 0))
+                # Expectativa conservadora: TP 1.5, SL 0.8
+                pf_oos = (wins * 1.5) / (losses * 0.8) if losses > 0 else (2.0 if wins > 0 else 1.0)
 
-        # Split Walk-Forward com Purge
-        split_idx = int(len(X) * 0.8)
-        X_train, y_train = X[:split_idx], y[:split_idx]
+        # Treinamento Final (Full Scaled Train para Produção)
+        X_final_scaled = self.scaler.fit_transform(X)
+        self.model.fit(X_final_scaled, y) 
         
-        test_start = split_idx + _hz + 10 # Purge gap + embargo
-        X_test, y_test = X[test_start:], y[test_start:]
+        self.n_samples = len(X)
+        self.reliability_score = final_score
+        self.profit_factor = pf_oos
+        self.status = "LIVE" if final_score > 0.52 and pf_oos > 1.2 else "OBSERVATION"
         
-        print(f"[ML-DEBUG] Training with X_train: {X_train.shape}, y_train: {y_train.shape}, Classes: {np.unique(y_train)}")
-        self.model.oob_score = False # Temporarily disable to bypass sklearn bug
-        self.model.fit(X_train, y_train)
-        self.n_samples = len(X_train)
-        score = self.model.score(X_test, y_test) if len(X_test) > 0 else 0.0
-        
-        # Score OOB para robustez
-        oob = self.model.oob_score_ if hasattr(self.model, 'oob_score_') and self.n_samples > 100 else 0.5
-        self.reliability_score = min(1.0, self.n_samples / 5000) * oob
-        
-        # Audit Report Log
-        diff = score - oob
-        audit_msg = f"[AUDIT] Samples: {self.n_samples} | Accuracy: {score:.2f} | OOB: {oob:.2f} | Diff: {diff:.2f}"
-        if diff > 0.15: audit_msg += " -> ⚠️ OVERFITTING ALERT"
-        print(audit_msg)
-        
-        # Um modelo e considerado LIVE apenas se tiver maturidade minima
-        self.status = "LIVE" if self.n_samples >= 400 else "OBSERVATION"
-        
+        print(f"[AUDIT] WFA Accuracy: {final_score:.2f} | Profit Factor: {pf_oos:.2f} | Samples: {self.n_samples}")
         self.is_trained = True
-        return score if len(X_test) > 0 else oob
+        return final_score
 
 
     def get_feature_importances(self):
@@ -237,10 +277,12 @@ class MLBrain:
         if not np.isfinite(current_features_row).all():
             return 0, 0.0, "NaN ou Inf detectado", 0.0
         
+        # Aplicacao do Scaler Persistido (Respeitando a escala do treino)
+        feat_vec = self.scaler.transform(current_features_row.reshape(1, -1))
+        
         if not hasattr(self.model, "estimators_") or len(self.model.estimators_) == 0:
-            return 0, 0.0, "Model not properly initialized", 0.0
-
-        feat_vec = current_features_row.reshape(1, -1)
+            return 0, 0.0, "Modelo nao treinado", 0.0
+            
         pred_class = self.model.predict(feat_vec)[0]
         probs = self.model.predict_proba(feat_vec)[0]
         max_prob = max(probs)
@@ -261,7 +303,8 @@ class MLBrain:
             'reliability_score': self.reliability_score,
             'atr_threshold': self.atr_threshold,
             'n_samples': self.n_samples,
-            'status': self.status
+            'status': self.status,
+            'scaler': self.scaler
 
         }
         joblib.dump(data_to_save, path)
@@ -271,6 +314,7 @@ class MLBrain:
         try:
             stored_data = joblib.load(path)
             self.model = stored_data['model']
+            self.scaler = stored_data.get('scaler', RobustScaler())
             self.feature_cols = stored_data['feature_cols']
             self.is_trained = stored_data['is_trained']
             self.reliability_score = stored_data.get('reliability_score', 0.0)

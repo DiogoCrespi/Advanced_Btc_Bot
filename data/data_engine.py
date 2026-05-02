@@ -7,6 +7,20 @@ import pandas as pd
 import numpy as np
 import requests
 from logic.xaut_logic import XAUTAnalyzer
+import socket
+from urllib3.util import connection
+
+# Forcar IPv4 (v3-Alpha Stability Patch)
+# Garante que o Docker/T1600 nao tente usar rotas IPv6 fantasmas que geram 'Connection refused'
+_orig_getaddrinfo = socket.getaddrinfo
+def patched_getaddrinfo(*args, **kwargs):
+    res = _orig_getaddrinfo(*args, **kwargs)
+    return [r for r in res if r[0] == socket.AF_INET]
+socket.getaddrinfo = patched_getaddrinfo
+
+# Silenciar avisos de SettingWithCopyWarning para manter o dashboard limpo
+import pandas as pd
+pd.options.mode.chained_assignment = None
 
 class DataEngine:
     def __init__(self, symbol="BTC-USD", secondary_symbol="ETH-USD", period="720d", interval="1h"):

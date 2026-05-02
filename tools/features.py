@@ -9,22 +9,21 @@ def apply_all_features(df, close_col="close"):
         ema_s = dt[cl].ewm(span=s, adjust=False).mean()
         macd = ema_f - ema_s
         sv = macd.ewm(span=sig, adjust=False).mean()
-        # Nomes de colunas do PR #49
-        dt[f'MACD_line{suf}'] = macd
-        dt[f'MACD_hist{suf}'] = macd - sv
-        dt[f'MACD_signal{suf}'] = sv
+        # Use .loc to avoid SettingWithCopyWarning
+        dt.loc[:, f'MACD_line{suf}'] = macd
+        dt.loc[:, f'MACD_hist{suf}'] = macd - sv
+        dt.loc[:, f'MACD_signal{suf}'] = sv
 
     def add_bb(dt, cl, l, std_val, suf):
         sma = dt[cl].rolling(window=l).mean()
         dev = dt[cl].rolling(window=l).std()
         u = sma + (dev * std_val)
         lw = sma - (dev * std_val)
-        # Nomes de colunas do PR #49 (BB_pct_distance)
         bb_range = u - lw
-        dt[f'BB_pct_distance{suf}'] = np.where(bb_range == 0, 0, (dt[cl] - lw) / bb_range)
-        # Colunas auxiliares p/ compatibilidade se necessario
-        dt[f'BB_lower{suf}'] = lw
-        dt[f'BB_upper{suf}'] = u
+        # Use .loc to avoid SettingWithCopyWarning
+        dt.loc[:, f'BB_pct_distance{suf}'] = np.where(bb_range == 0, 0, (dt[cl] - lw) / bb_range)
+        dt.loc[:, f'BB_lower{suf}'] = lw
+        dt.loc[:, f'BB_upper{suf}'] = u
 
     # 1. Base Timeframe (1h)
     add_macd(df, close_col, 12, 26, 9, '_1h')
@@ -41,6 +40,6 @@ def apply_all_features(df, close_col="close"):
     # Injetar os prefixos 'feat_' para o MLBrain capturar automaticamente
     for col in df.columns:
         if ('MACD' in col or 'BB_' in col) and not col.startswith('feat_'):
-            df[f'feat_{col.lower()}'] = df[col]
+            df.loc[:, f'feat_{col.lower()}'] = df[col]
 
     return df

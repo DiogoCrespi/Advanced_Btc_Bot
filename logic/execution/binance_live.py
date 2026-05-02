@@ -12,8 +12,13 @@ class BinanceLive(BaseExchange):
         self.client = None
 
         if not self.api_key or not self.api_secret:
-            print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
-            sys.exit(1)
+            if os.getenv("SHADOW_MODE", "True").lower() == "true":
+                print("[WARN] Chaves Binance ausentes, mas operando em SHADOW_MODE. Usando credenciais dummy.")
+                self.api_key = "dummy"
+                self.api_secret = "dummy"
+            else:
+                print("[ERRO FATAL] Chaves BINANCE_API_KEY e BINANCE_API_SECRET ausentes no .env!")
+                sys.exit(1)
 
     async def initialize(self, max_retries: int = 5):
         """Initialize the AsyncClient with retries for network issues."""
@@ -25,6 +30,11 @@ class BinanceLive(BaseExchange):
                     except: pass
                 
                 self.client = await AsyncClient.create(self.api_key, self.api_secret)
+                
+                if self.api_key == "dummy":
+                    print("👻 [SHADOW] Operando sem chaves reais. Funcionalidades restritas (Apenas Market Data publico).")
+                    return
+
                 account_info = await self.client.get_account()
                 if not account_info.get('canTrade'):
                     print("[ERRO FATAL] As chaves API nao tem permissao de Trading habilitada!")
@@ -78,8 +88,11 @@ class BinanceLive(BaseExchange):
         return await self.client.get_symbol_info(symbol)
 
     async def start_user_data_stream(self) -> str:
+        if self.api_key == "dummy":
+            return ""
         try:
-            return await self.client.get_listen_key()
+            # Para Futuros (Yield Basis), o metodo correto no AsyncClient do python-binance e futures_stream_get_listen_key
+            return await self.client.futures_stream_get_listen_key()
         except Exception as e:
             print(f"[ERROR] Falha ao obter Listen Key: {e}")
             return ""

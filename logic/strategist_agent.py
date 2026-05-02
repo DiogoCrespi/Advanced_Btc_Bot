@@ -1,6 +1,7 @@
 # NOTA: Prints, logs e comentarios devem ser mantidos sem acentuacao para evitar quebra de encoding no Putty/Docker.
 import json
 import os
+import numpy as np
 from typing import Dict, List, TypedDict
 from langgraph.graph import StateGraph, END
 from logic.macro_radar import MacroRadar
@@ -98,63 +99,51 @@ class StrategistAgent:
         state['reasoning'].append(f"Decisao: {state['decision']} | Multiplicador: {mult} ({msg})")
         return state
 
-    def assess_trade(self, asset: str, signal: int, probability: float, reason: str, reliability: float = 1.0, caution_mode: bool = False, book_imbalance: float = 0.0):
+    def assess_trade(self, asset: str, signal: int, probability: float, reason: str, reliability: float = 1.0, caution_mode: bool = False, book_imbalance: float = 0.0, recent_returns: List[float] = None, current_drawdown: float = 0.0):
         """
-        Avalia um trade especifico com base na probabilidade do ML, confiabilidade,
-        contexto macro e Microestrutura de Mercado (Veto de Imbalance).
-        Retorna: (decision, reason, modifiers)
+        Avaliacao Racional: Substitui heuristicas por Sizing via Expected Shortfall (CVaR).
+        Optimal_Size = (Target_Risk / CVaR) * Confidence * Drawdown_Penalty
         """
+        # 1. Calculo do Expected Shortfall (CVaR) - Percentil 5%
+        # Se nao houver dados suficientes, usamos um fallback conservador (ATR ou 2%)
+        if recent_returns and len(recent_returns) > 100:
+            returns = np.array(recent_returns)
+            var_95 = np.percentile(returns, 5)
+            cvar_95 = abs(np.mean(returns[returns <= var_95]))
+        else:
+            cvar_95 = 0.02 # Fallback: 2% de risco de cauda
+            
+        # 2. Penalizacao Convexa de Drawdown (Protecao de Capital)
+        # Se o drawdown atingir 10%, a penalidade reduz a mao a ZERO
+        max_dd_limit = 0.10
+        dd_penalty = max(0.0, (1.0 - (current_drawdown / max_dd_limit))**2)
+        
+        # 3. Calculo do Tamanho Otimo (Racional)
+        target_risk_per_trade = 0.01 # 1% do Equity em risco
+        confidence = probability if probability > 0.5 else 0.0
+        
+        # Sizing inversamente proporcional ao risco de cauda (CVaR)
+        # Protecao contra divisao por zero
+        safe_cvar = max(0.005, cvar_95)
+        optimal_size_mult = (target_risk_per_trade / safe_cvar) * confidence * dd_penalty
+        
+        # 4. Veto de Microestrutura (Micro-timing)
+        if signal == 1 and book_imbalance < -0.40:
+            return "VETO", f"Muralha de Venda (Imbalance: {book_imbalance:.2f})", {'size_mult': 0}
+        if signal == -1 and book_imbalance > 0.40:
+            return "VETO", f"Suporte de Compra (Imbalance: {book_imbalance:.2f})", {'size_mult': 0}
+
+        # 5. Decisao Final
+        is_approve = confidence > 0.55
+        decision = "APPROVE" if is_approve else "REJECT"
+        
         modifiers = {
-            'size_mult': 1.0,
+            'size_mult': min(2.0, optimal_size_mult), # Cap de 2x para evitar alavancagem excessiva
             'tp_mult': 1.0,
             'sl_mult': 1.0
         }
         
-        # 1. Filtro de Microestrutura (Veto por Imbalance do Order Book)
-        # Se imbalance < -0.2, ha muito mais liquidez de venda (Asks) do que compra (Bids).
-        if signal == 1 and book_imbalance < -0.40:
-            return "VETO", f"Muralha de Venda Detectada (Imbalance: {book_imbalance:.2f})", modifiers
-        
-        # Se imbalance > 0.2, ha muito mais liquidez de compra (Bids) do que venda (Asks).
-        if signal == -1 and book_imbalance > 0.40:
-            return "VETO", f"Suporte de Compra Detectado (Imbalance: {book_imbalance:.2f})", modifiers
-
-        # 2. Filtro de Probabilidade Dinamico
-        threshold = 0.58 # Default para Modelos Direcionais (v1/v2)
-        is_v3 = "v3-Alpha" in reason or "Breakout" in reason or "Consenso" in reason
-        
-        if is_v3:
-            # Isencao v3-Alpha: Alpha vem do Payoff, nao da probabilidade base.
-            threshold = 0.38 
-        elif reliability < 0.5:
-            # Modelos em Warmup ou Experimentais (v1/v2)
-            threshold = 0.65 # Reduzido de 0.80 para ser mais realista
-        
-        if caution_mode:
-            threshold += 0.05 # Margem extra de seguranca se o bot detectou perdas recentes
-            
-        if probability < threshold:
-            r_msg = f"Probabilidade insuficiente ({probability:.2f} < {threshold:.2f})"
-            if reliability < 0.5: r_msg += " [MODELO EXPERIMENTAL]"
-            return "REJECT", r_msg, modifiers
-            
-        # 3. Ajuste por Conviccao
-        if probability > 0.85:
-            modifiers['size_mult'] *= 1.2
-            modifiers['tp_mult'] *= 1.5 # Alvos mais longos em alta conviccao
-            
-        # 4. Filtro Macro (acesso direto ao radar)
-        if self.radar.risk_score < 0.3 and signal == 1:
-            return "REJECT", "Macro Risk Off (No Longs)", modifiers
-            
-        # 5. Classificacao Scout vs Sniper (Tiered Execution)
-        # Ousado (Scout): Modelos experimentais, v3-Alpha inicial, probabilidades intermediarias ou baixa volatilidade
-        is_scout = (reliability < 0.5) or (probability < 0.65) or ("[LOW_VOL]" in reason)
-        
-        decision = "APPROVE_SCOUT" if is_scout else "APPROVE_SNIPER"
-        tag = "[SCOUT]" if is_scout else "[SNIPER]"
-        
-        return decision, f"Aprovado {tag}: {reason}", modifiers
+        return decision, f"Racional ES: CVaR={cvar_95:.2%}, Penalty={dd_penalty:.2f}", modifiers
 
     def run(self, signals: Dict[str, float], macro_data: Dict[str, float]):
         initial_state = {

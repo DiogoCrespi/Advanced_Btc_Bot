@@ -24,7 +24,7 @@ class OrderFlowLogic:
         # Taker Buy = Volume que agrediu o Ask (Compra)
         # Seller Aggression = Volume que agrediu o Bid (Venda)
         vol_seller_aggr = vol_total - vol_taker_buy
-        df['feat_delta'] = vol_taker_buy - vol_seller_aggr
+        df['feat_delta'] = (vol_taker_buy - vol_seller_aggr).fillna(0)
         
         # 2. CVD (Cumulative Volume Delta) - Janelas taticas (PR #61)
         # Usaremos janelas curtas para capturar momentum intra-day institucional

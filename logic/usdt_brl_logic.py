@@ -9,11 +9,11 @@ class UsdtBrlLogic:
     2. Safe Harbor (refugio em USDT quando o risco macro e alto).
     """
 
-    # Limiares de sinal para Media Reversao
-    RSI_BUY_THRESHOLD = 35   # USDT "barato" (sobrevenda)
-    RSI_SELL_THRESHOLD = 65  # USDT "caro" (sobrecompra)
-    BB_BUY_ZONE = 0.2        # Perto da banda inferior
-    BB_SELL_ZONE = 0.8       # Perto da banda superior
+    # Limiares de sinal para Media Reversao (Aliviados para modo Batedor)
+    RSI_BUY_THRESHOLD = 42   # USDT "barato" (sobrevenda)
+    RSI_SELL_THRESHOLD = 58  # USDT "caro" (sobrecompra)
+    BB_BUY_ZONE = 0.3        # Perto da banda inferior
+    BB_SELL_ZONE = 0.7       # Perto da banda superior
 
     def compute_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()

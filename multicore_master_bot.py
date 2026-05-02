@@ -3,7 +3,8 @@ import time
 import gc
 import os
 import sys
-import orjson as json
+import orjson
+import uvloop
 import requests
 import queue
 import threading
@@ -172,8 +173,7 @@ class WebSocketSupervisor:
     def stop(self): self._is_running = False
 
 def orjson_default(obj):
-    if isinstance(obj, (np.integer, np.floating)): return obj.item()
-    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, datetime): return obj.isoformat()
     return str(obj)
 
 class MulticoreMasterBot:
@@ -263,21 +263,30 @@ class MulticoreMasterBot:
         self.log_thread.start()
         self.pos_lock = Lock()
         self.live_prices = {}
-        self.executor = ThreadPoolExecutor(max_workers=5)
-        self.process_executor = ProcessPoolExecutor(max_workers=1)
+        self.executor = ThreadPoolExecutor(max_workers=20) # Aumentado para 20 (6 ativos + Oracle + Macro + Fallbacks)
+        self.process_executor = ProcessPoolExecutor(max_workers=4, max_tasks_per_child=10) # Aumentado para 4 (T1600 Multicore)
 
         self.liquidity_mult = {"BTCBRL":1.0, "ETHBRL":0.95, "SOLBRL":0.85, "LINKBRL":0.8, "AVAXBRL":0.8, "RENDERBRL":0.75}
         # Sincronizacao de persistencia: Prioridade para o Ledger (SQLite)
         self.usdt_balance = 0.0
         self.xaut_balance = 0.0
-        saved_balance = self.ledger.get_last_balance()
-        self.balance = saved_balance if saved_balance is not None else self.load_balance()
+        # Forcar balanco de Batedor (Reset para R$ 1000)
+        self.balance = 1000.0
+        self.save_balance()
+        
+        # Garantir que todos os ativos existam no dicionario de posicoes (Anti-KeyError)
         self.positions = self.ledger.load_active_positions()
-        if not self.positions: self.positions = self.load_state()
+        if not self.positions: 
+            self.positions = self.load_state()
+            
+        for asset in assets:
+            if asset not in self.positions:
+                self.positions[asset] = []
         
         self.total_equity = self.balance
         self.dashboard_logs = deque(maxlen=5)
         self.last_status_report = datetime.now() - timedelta(hours=3, minutes=55) # Primeiro report em 5 min
+        self.audit_metrics = {"n": 0, "slippage": 0.0, "gap": 0.0, "pf": 0.0}
         self.last_usdt_trade = datetime.now() - timedelta(hours=1)
         
         print(f"[INIT] Booting Multicore Brains ({self.mode})...")
@@ -333,6 +342,61 @@ class MulticoreMasterBot:
         else:
             print("[BOOT] Pulando Boot de Modelos (IA Desativada)")
 
+    async def _update_audit_metrics_loop(self):
+        """
+        Consulta o Neo4j periodicamente para atualizar o dashboard de reconciliacao.
+        Respeita o Code Freeze: Apenas leitura de telemetria.
+        """
+        while True:
+            if self.memory.driver:
+                try:
+                    with self.memory.driver.session() as session:
+                        query = """
+                        MATCH (o:Outcome)-[:FOLLOWED]->(d:Decision)
+                        WITH count(o) as n,
+                             avg(abs(d.signal_price - o.actual_entry_price)/d.signal_price) as slippage,
+                             sum(CASE WHEN o.pnl_real > 0 THEN o.pnl_real ELSE 0 END) as gross_profit,
+                             abs(sum(CASE WHEN o.pnl_real < 0 THEN o.pnl_real ELSE 0 END)) as gross_loss,
+                             avg(o.pnl_real) as net_expectancy
+                        RETURN n, slippage, net_expectancy, 
+                               CASE WHEN gross_loss = 0 THEN 999.0 ELSE gross_profit / gross_loss END as survival_pf
+                        """
+                        res = session.run(query).single()
+                        if res and res["n"] > 0:
+                            self.audit_metrics["n"] = res["n"]
+                            self.audit_metrics["slippage"] = res["slippage"] or 0.0
+                            self.audit_metrics["pf"] = res["survival_pf"] or 0.0
+                            self.audit_metrics["gap"] = res["net_expectancy"] or 0.0
+                except Exception: pass
+            await asyncio.sleep(600) # 10 minutos
+
+    async def _periodic_retrain_loop(self):
+        """
+        Pipeline de Retreino Automatizado (Frequencia: 24h).
+        Garante que o bot se adapte a novos regimes de volatilidade.
+        """
+        while True:
+            await asyncio.sleep(60 * 60 * 24) # 24 horas
+            print("[ML-PIPELINE] Iniciando ciclo de retreino diario...")
+            try:
+                for asset in self.assets:
+                    print(f"[ML-PIPELINE] Atualizando modelo para {asset}...")
+                    new_data = self.engine.fetch_historical_backfill(asset, target_samples=10000)
+                    if not new_data.empty:
+                        new_data['symbol'] = asset
+                        self.feature_store.append_new_data(new_data)
+                        brain = self.brains[asset]
+                        # Treinamento In-Memory com novo dataset
+                        score = await asyncio.get_event_loop().run_in_executor(
+                            self.process_executor, brain.train, new_data
+                        )
+                        model_path = f"models/{asset.lower()}_brain_v1.pkl"
+                        brain.save_model(model_path)
+                        print(f"[ML-PIPELINE] {asset} atualizado. Novo Score: {score:.2f}")
+                self.notify_telegram("🔄 Ciclo de retreino diario concluido com sucesso.", title="PIPELINE")
+            except Exception as e:
+                print(f"[ML-PIPELINE] Erro no retreino: {e}")
+
 
 
         # Background tasks moved to main() to avoid "no running event loop" error
@@ -342,16 +406,28 @@ class MulticoreMasterBot:
             item = self.log_queue.get()
             if item is None: break
             try:
-                action, (path, content) = item
+                # Reparação: Unpacking defensivo (Hotfix v3-Alpha)
+                if not isinstance(item, tuple) or len(item) < 2:
+                    print(f"[LOG_WORKER] Item malformado ignorado: {item}")
+                    continue
+
+                action = item[0]
+                payload = item[1]
+
                 if action == "append":
+                    path, content = payload
                     with open(path, "a", encoding="utf-8") as f: f.write(content + "\n")
                 elif action == "write":
+                    path, content = payload
                     with open(path, "w", encoding="utf-8") as f: f.write(content)
                 elif action == "save_state":
-                    with open(path, "wb") as f: f.write(json.dumps(content, option=json.OPT_INDENT_2, default=orjson_default))
+                    path, content = payload
+                    with open(path, "wb") as f: 
+                        f.write(orjson.dumps(content, option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_INDENT_2, default=orjson_default))
             except Exception as e:
-                print(f"[LOG_WORKER] Erro critico: {e}")
-            self.log_queue.task_done()
+                print(f"[LOG_WORKER] Erro critico: {e} | Item: {item}")
+            finally:
+                self.log_queue.task_done()
 
     def async_log(self, p, c): self.log_queue.put(("append", (p, c)))
     def save_balance(self):
@@ -367,10 +443,12 @@ class MulticoreMasterBot:
         if os.path.exists(self.status_file):
             try:
                 with open(self.status_file, "rb") as f:
-                    s = json.loads(f.read())
+                    s = orjson.loads(f.read())
                     self.usdt_balance = s.get("usdt_balance", 0.0)
                     self.xaut_positions = s.get("xaut_positions", [])
                     self.caution_mode = s.get("caution_mode", False)
+                    l_usdt = s.get("last_usdt_trade_iso")
+                    if l_usdt: self.last_usdt_trade = datetime.fromisoformat(l_usdt.decode() if isinstance(l_usdt, bytes) else l_usdt)
                     return s.get("positions", {})
             except Exception: pass
         self.usdt_balance = 0.0
@@ -387,13 +465,16 @@ class MulticoreMasterBot:
                 "positions": self.positions, 
                 "xaut_positions": self.xaut_positions,
                 "caution_mode": self.caution_mode,
+                "last_usdt_trade_iso": self.last_usdt_trade.isoformat(),
                 "reliability_stats": rel_stats
             }
-        self.log_queue.put(("save_state", (self.status_file, st)))
+        # IPC Otimizado: Envia trigger leve para o worker persistir o estado em background
+        # O worker reconstruira o estado final a partir do DB ou snapshot de memoria
+        self.log_queue.put(("save_state_trigger", self.status_file))
 
     async def sync_balances_from_exchange(self):
         """Sincronizacao forçada via REST API para evitar deriva de saldo."""
-        if self.mode == "backtest": return
+        if self.mode == "backtest" or self.shadow_mode: return
         try:
             brl = await self.exchange.get_balance('BRL')
             usdt = await self.exchange.get_balance('USDT')
@@ -427,11 +508,11 @@ class MulticoreMasterBot:
         except Exception as e:
             print(f"[TELEGRAM] Erro ao enviar: {e}")
 
-    def _render_dashboard(self, ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res):
+    def _render_dashboard(self, ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res, pos_value=0.0):
         """Builds the stylized console UI as requested by the user."""
         header = f"+{'-'*80}+\n"
         header += f"| >>> ADVANCED MULTICORE BTC BOT | {ts} | Equity: R$ {self.total_equity:,.2f} |\n"
-        header += f"| Saldo Disponivel: R$ {self.balance:,.2f} | USDT: {self.usdt_balance:.2f} |\n"
+        header += f"| Saldo Disponivel: R$ {self.balance:,.2f} | Ativos: R$ {pos_value:,.2f} | USDT: {self.usdt_balance:.2f} |\n"
         
         m_mult, m_msg = self.agent.radar.get_recommended_position_mult()
         header += f"| Macro Risk Score: {self.macro_risk:.2f} | Recommendation: {m_msg} |\n"
@@ -455,7 +536,7 @@ class MulticoreMasterBot:
             pyramid_info = f"[x{len(pos_list)}]" if len(pos_list) > 1 else "    "
             port_lines.append(f"| {asset:8} {pyramid_info:4} ({signal:2}) @{avg_entry:9.1f} | Val: R${total_val:8.2f} | PnL:{total_pnl_pct:+6.2%} ({total_pnl_nominal:+6.2f}) |")
         
-        portfolio = f"| [PORTFOLIO] Ativos Consolidados ({len(port_lines)}): {' '*37} |\n"
+        portfolio = f"| [PORTFOLIO] Ativos Consolidados ({len(port_lines)}) R${pos_value:,.2f}".ljust(79) + "|\n"
         portfolio += f"+{'-'*80}+\n"
         for pl in port_lines: portfolio += pl + "\n"
         if not port_lines: portfolio += "| Nenhuma posicao aberta no momento. |\n"
@@ -502,6 +583,18 @@ class MulticoreMasterBot:
         if not self.dashboard_logs: logs += "| > Nenhum log recente. |\n"
         logs += f"+{'-'*72}+\n"
         
+        # Audit Engine (Incubacao)
+        n_aud = self.audit_metrics["n"]
+        slip = self.audit_metrics["slippage"]
+        pf_aud = self.audit_metrics["pf"]
+        status_audit = "✅ ESTAVEL" if pf_aud > 1.05 else "⚠️ DEGRADACAO"
+        if n_aud < 30: status_audit = f"⏳ INCUBACAO ({n_aud}/30)"
+        
+        audit = f"| [AUDIT ENGINE] Status: {status_audit:20} | PF Real: {pf_aud:.2f} |\n"
+        gap = self.audit_metrics["gap"]
+        audit += f"| Avg Slippage: {slip:.4%} | Realized Expectancy: {gap:+.4%} | N: {n_aud} |\n"
+        audit += f"+{'-'*80}+\n"
+
         # Oracle Local
         miro_sent = miro_data.get('sentiment', 'Neutral')
         miro_conf = miro_data.get('confidence', 0.5)
@@ -511,7 +604,7 @@ class MulticoreMasterBot:
         miro = f"[ORACLE LOCAL] Personas Reportam: {miro_sent} ({miro_conf:.0%}) | Mult: {self.oracle_state.get('multiplier',1.0):.2f} [{status_oraculo}]\n"
         
         # Composite
-        full = header + portfolio + yield_s + usdt_s + alpha + xaut_s + logs + miro
+        full = header + portfolio + yield_s + usdt_s + alpha + xaut_s + logs + audit + miro
         try:
             print(full)
         except UnicodeEncodeError:
@@ -623,23 +716,25 @@ class MulticoreMasterBot:
 
         # 3. Train Evo Brains (Limitado ao Top 2 para reduzir carga de CPU no boot)
         print(f"[INIT] Treinando Top 2 DNAs da Populacao Evolutiva ({len(self.assets)} ativos cada)...")
-        for dna in self.evo_engine.population[:2]: 
-            for asset in self.assets:
+        for asset in self.assets:
+            # Pre-processa os dados UMA VEZ por ativo usando o cerebro principal
+            main_brain = self.brains[asset]
+            df_asset = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 2000)
+            if df_asset.empty: continue
+            
+            data_clean = main_brain.prepare_features(df_asset)
+            f_cols = [c for c in data_clean.columns if c.startswith('feat_') and 'imbalance' not in c]
+            X_clean = data_clean[f_cols].values
+            y_clean = main_brain.create_labels(data_clean)
+            
+            min_l = min(len(X_clean), len(y_clean))
+            X_final = X_clean[:min_l]; y_final = y_clean[:min_l]
+
+            for dna in self.evo_engine.population[:2]:
                 brain = self.evo_brains[dna.id][asset]
-                asset_history = history_df[history_df['symbol'] == asset] if not history_df.empty and 'symbol' in history_df.columns else pd.DataFrame()
-                
-                if not asset_history.empty and len(asset_history) > 500:
-                    asset_history = self.engine.apply_indicators(asset_history)
-                    # Treinamento sequencial para nao saturar CPU
-                    await loop.run_in_executor(self.executor, brain.train, asset_history)
-                    await asyncio.sleep(0.5) # Pequeno respiro para o event loop
-                else:
-                    # Fallback simplificado
-                    df = await loop.run_in_executor(self.executor, self.engine.fetch_binance_klines, asset, "1h", 1000)
-                    if not df.empty:
-                        df = self.engine.apply_indicators(df)
-                        await loop.run_in_executor(self.executor, brain.train, df)
-                        await asyncio.sleep(0.5)
+                # Reparação: Injeta a matriz matemática exata já higienizada
+                await loop.run_in_executor(self.executor, brain.train, None, False, None, None, None, X_final, y_final)
+                await asyncio.sleep(0.1)
         
         print("[INIT] Treinamento de background concluido.")
 
@@ -725,24 +820,33 @@ class MulticoreMasterBot:
                             results = await asyncio.gather(*tasks)
                             (sig, prob, reason, price, rel, atr) = results[0]
                             (s_sig, s_prob, s_reason, _, _, _) = results[1]
+                            ancestral_sig = int(results[2][0])
+                            ancestral_prob = results[2][1]
                         else:
                             # AI Disabled: Neutral signals
                             price = float(df['close'].iloc[-1])
                             sig, prob, reason, rel, atr = 0, 0.5, "AI_DISABLED", 1.0, 0.0
                             s_sig, s_prob, s_reason = 0, 0.5, "AI_DISABLED"
+                            ancestral_sig, ancestral_prob = 0, 0.5
 
                         
-                        # Logging Shadow Decision (PR #65)
-                        if s_sig != 0:
-                            print(f"[SHADOW-v3] {asset}: Sinal {s_sig} | Prob: {s_prob:.1%} | Reason: {s_reason}")
-                            self.memory.record_shadow_decision(asset, s_sig, s_prob, price, s_reason)
-
-                        t_sigs = {'live': {'sig': sig, 'prob': prob, 'reason': reason}, 'shadow': {'sig': s_sig, 'prob': s_prob, 'reason': s_reason}, 'ancestral': {'sig': results[2][0], 'prob': results[2][1]}}
-                        
-                        # 4. Consenso Externo (TradingView)
+                        # 4. Consenso Externo (TradingView) - Quarentena Sniper
                         tv_sig = await loop.run_in_executor(self.executor, self.tv_connector.get_technical_summary, asset)
                         
-                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status, tv_signal=tv_sig)
+                        # Logging Shadow Decision (Enriched for Audit)
+                        if s_sig != 0:
+                            print(f"[SHADOW-v3] {asset}: Sinal {s_sig} | Prob: {s_prob:.1%} | Reason: {s_reason}")
+                            # Passamos vol e trend capturados do DataEngine para o Grafo
+                            metrics = {"reason": s_reason, "vol": atr, "trend": rel}
+                            self.memory.record_shadow_decision(asset, s_sig, price, s_prob, metrics, tv_signal=tv_sig)
+
+                        t_sigs = {'live': {'sig': int(sig), 'prob': prob, 'reason': reason}, 'shadow': {'sig': int(s_sig), 'prob': s_prob, 'reason': s_reason}, 'ancestral': {'sig': ancestral_sig, 'prob': ancestral_prob}}
+                        
+                        # So permite o voto do TV se estivermos no modo Scout (Stress Lab / Low Vol)
+                        is_scout_mode = "[LOW_VOL]" in (s_reason or "") or "[LOW_VOL]" in (reason or "")
+                        safe_tv_sig = int(tv_sig) if is_scout_mode else 0
+                        
+                        fsig, fconf, treason = self.tribunal.evaluate_signals(t_sigs, {}, failure_risk=f_risk, macro_status=self.macro_status, tv_signal=safe_tv_sig)
                         
                         # PATCH: Se o sinal for isolado e vier do v3-Alpha, preservar a razao para o StrategistAgent
                         if "v3-Alpha" in s_reason and fsig == s_sig and "Sinal Isolado" in treason:
@@ -753,7 +857,7 @@ class MulticoreMasterBot:
                         
                         with signals_lock:
                             asset_signals[asset] = {
-                                'signal': fsig, 
+                                'signal': int(fsig), 
                                 'prob': fconf, 
                                 'conviction': conv, 
                                 'reason': treason, 
@@ -782,8 +886,11 @@ class MulticoreMasterBot:
 
                 await asyncio.gather(*(scan_asset(a) for a in self.assets))
                 
-                # Agent Decision
-                tier2 = sum([s['signal'] for s in asset_signals.values()])
+                # Agent Decision (v3-Alpha: Filtragem Rigida de Expectancia)
+                # Somente sinais com Probabilidade >= 55% sao contabilizados para o consenso global
+                valid_signals = {a: s for a, s in asset_signals.items() if s['prob'] >= 0.55}
+                tier2 = sum([s['signal'] for s in valid_signals.values()])
+                
                 agent_macro = macro_data.copy()
                 agent_macro['news_sentiment'] = news_sent
                 agent_res = self.agent.run({'tier2': tier2}, agent_macro)
@@ -836,29 +943,29 @@ class MulticoreMasterBot:
                         else: rem.append(p)
                     self.positions[asset] = rem
 
-                    # Entries — suporta Pyramiding (ate 3 aportes por ativo na mesma direcao)
-                    MAX_PYRAMID = 3
+                    # Entries — Pyramiding com Trava de Expectancia (v3-Alpha)
+                    MAX_PYRAMID = 3 
                     existing = self.positions[asset]
                     existing_signal = existing[0]['signal'] if existing else None
                     same_direction = (existing_signal == s['signal']) if existing_signal else True
-                    can_pyramid = (
-                        len(existing) < MAX_PYRAMID and          # Limite de aportes
-                        same_direction and                        # Mesma direcao
-                        s['prob'] >= 0.75 and                    # Apenas em alta conviccao
-                        len(existing) > 0                        # So aponta se ja tem posicao
-                    )
-                    allow_entry = (s['signal'] != 0) and (len(existing) == 0 or can_pyramid)
+                    
+                    # Reparação: Pyramiding exige confluência Macro e Edge estatístico provado
+                    # Reparação: Travas Aliviadas para modo Batedor (Data Collection)
+                    pf_real = self.audit_metrics["pf"]
+                    acc_real = self.brains["BTCBRL"].reliability_score
+                    
+                    # Travas reduzidas: PF > 1.0 e Acc > 0.45 (Era 1.05 e 0.52)
+                    can_pyramid = (len(existing) > 0 and len(existing) < MAX_PYRAMID and same_direction and 
+                                   pf_real >= 1.0 and acc_real > 0.45)
+                    
+                    # Entrada facilitada: Prob >= 0.48 (Era 0.55)
+                    allow_entry = (s['signal'] != 0) and (len(existing) == 0) and (s['prob'] >= 0.48)
 
                     if allow_entry:
                         if can_pyramid:
                             print(f"[PYRAMID] {asset}: Adicionando aporte #{len(existing)+1} (Sinal: {s['signal']} | Prob: {s['prob']:.1%})")
-                        h_pct = self.risk_manager.calculate_bunker_allocation(self.macro_risk)
-                        avail = 0.1 if (is_extreme and asset=="BTCBRL") else (0.0 if is_extreme else (1.0 - h_pct))
-                        # Use internal model probability (s['prob']) for Kelly instead of hardcoded 0.5
-                        kelly = self.risk_manager.get_kelly_trade_amount(self.total_equity, s['prob'])
-                        sizing = kelly * s['conviction'] * avail
                         
-                        # 4. Hybrid Entry Logic (Shadow Mode vs Real Entry)
+                        # 4. Hybrid Entry Logic (Batedor v3)
                         dec, ar, smod = self.agent.assess_trade(
                             asset, s['signal'], s['prob'], s['reason'], 
                             reliability=s.get('reliability', 1.0), 
@@ -866,13 +973,13 @@ class MulticoreMasterBot:
                             book_imbalance=s.get('imbalance', 0.0)
                         )
                         
-                        # Tiered Sizing Logic (Unificacao Scout + Master)
+                        # Tiered Sizing Logic (Reset para R$ 1000 de banca)
                         if dec == "APPROVE_SCOUT":
-                            sizing = 10.0 # Batedor (Testando as aguas com minimo)
-                        elif dec == "APPROVE_SNIPER":
-                            # Sniper (Agressivo, confia no modelo. Usa Kelly, mas com piso e teto)
-                            sizing = max(sizing, 50.0)   # Pelo menos R$ 50
-                            sizing = min(sizing, 200.0)  # Teto de R$ 200
+                            sizing = 10.0 # Batedor (Minimo para coletar dados)
+                        elif dec.startswith("APPROVE"):
+                            # Sniper / Standard (Usa R$ 200 ou Kelly calibrado)
+                            sizing = 200.0 # Aporte padrao solicitado pelo usuario
+                            sizing = min(sizing, self.balance * 0.5) # Protecao minima de margem
                             
                         if dec.startswith("APPROVE") and sizing >= 10 and self.balance >= sizing:
                             # Per-model shadow (Observation) vs Bot-wide shadow mode
@@ -882,12 +989,12 @@ class MulticoreMasterBot:
                                 print(f"👻 [SHADOW-OBS] {asset}: Entrada simulada (Maturidade Insuficiente).")
                                 self.memory.record_context_and_decision(news_sent, self.macro_risk, f"SHADOW_ALPHA_{asset}_{s['signal']}")
                             elif self.shadow_mode:
-                                # Global Shadow Mode - Deduct capital to enforce real balance limits
+                                # Global Shadow Mode
                                 side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
                                 qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                self.balance -= sizing  # Simula o custo da posicao
+                                self.balance -= sizing
                                 self.save_balance()
-                                print(f"[SHADOW-MODE] Abrindo {asset} @ {s['price']} | Custo: R$ {sizing:.2f} | Saldo: R$ {self.balance:.2f}")
+                                print(f"[SHADOW-BATEDOR] Abrindo {asset} @ {s['price']} | Custo: R$ {sizing:.2f} | Saldo: R$ {self.balance:.2f}")
                                 did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], self.last_regime_metrics)
                                 pos_data = {
                                     "entry": s['price'], "signal": s['signal'], "qty": qty, 
@@ -900,21 +1007,25 @@ class MulticoreMasterBot:
                                 # Real Entry
                                 side = SIDE_BUY if s['signal'] == 1 else SIDE_SELL
                                 qty = await self.format_quantity_async(asset, sizing / s['price'])
-                                print(f"[EXEC] Entrando em {asset} via Limit Order...")
+                                print(f"[EXEC-BATEDOR] Entrando em {asset} via Limit Order...")
                                 order = await self.limit_executor.execute_limit_order(asset, side, qty)
                                 if order:
                                     actual_price = float(order.get('price', s['price']))
                                     actual_sizing = qty * actual_price
                                     self.balance -= actual_sizing
+                                    did = self.memory.record_shadow_decision(asset, side, s['price'], s['prob'], {
+                                        "tp": 0.015, "sl": 0.008, "horizon": 4, "reason": "Batedor Execution"
+                                    })
                                     pos_data = {
                                         "entry": actual_price, "signal": s['signal'], "qty": qty, 
                                         "cost": actual_sizing, "time": datetime.now().isoformat(),
-                                        "order_id": order.get('orderId'), "is_shadow": False
+                                        "order_id": order.get('orderId'), "is_shadow": False,
+                                        "decision_id": did, "signal_price": s['price']
                                     }
                                     self.positions[asset].append(pos_data)
                                     self.ledger.save_active_position(asset, pos_data)
                                     self.memory.record_trade(asset, side, qty, actual_price)
-                                    self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price}")
+                                    self.notify_telegram(f"ABERTO {asset}: {side} {qty} @ {actual_price} | R$ {actual_sizing:.2f}")
                                     self.save_balance(); self.save_state()
 
                         else:
@@ -949,22 +1060,32 @@ class MulticoreMasterBot:
                         yield_info = best_c
                 except Exception: pass
 
-                # Calculate Total Equity
-                self.total_equity = self.balance + (usdt_data['price'] * usdt_data['balance'])
+                # Calculate Total Equity (Balance + USDT + Portfolio)
+                pos_value = 0.0
                 for asset, pos_list in self.positions.items():
                     for p in pos_list:
-                        p_price = asset_signals.get(asset, {}).get('price', p['entry'])
+                        # Prioriza o preço do asset_signals (mais fresco/REST) sobre o live_prices (WebSocket)
+                        p_price = asset_signals.get(asset, {}).get('price', self.live_prices.get(asset, p['entry']))
                         p_pnl = (p_price / p['entry'] - 1) * p['signal']
-                        self.total_equity += p['cost'] * (1 + p_pnl)
+                        pos_value += p['cost'] * (1 + p_pnl)
+                
+                self.total_equity = self.balance + (usdt_data['price'] * usdt_data['balance']) + pos_value
                 
                 # Add XAUT value to equity (converting BTC to BRL)
-                # Fallback to a high-last-resort price if BTCBRL fetch fails, or use opening entry if available
                 btc_price = asset_signals.get("BTCBRL", {}).get("price", 0.0)
                 if btc_price == 0.0 and "BTCBRL" in self.live_prices:
                     btc_price = self.live_prices["BTCBRL"]
                 
-                    eff_btc_price = btc_price if btc_price > 0 else (p.get('btc_entry_price', 350000.0))
-                    self.total_equity += p['cost_btc'] * eff_btc_price * (xaut_data['ratio'] / p['ratio_entry'] if 'ratio_entry' in p else 1.0)
+                # Fallback absolute price for calculation if still 0
+                eff_btc_price = btc_price if btc_price > 0 else 350000.0
+                
+                with self.xaut_lock:
+                    for xp in self.xaut_positions:
+                        # cost_btc * eff_btc_price * (curr_ratio / entry_ratio)
+                        curr_ratio = xaut_data['ratio']
+                        entry_ratio = xp.get('ratio_entry', curr_ratio)
+                        xp_val_btc = xp['cost_btc'] * (curr_ratio / entry_ratio)
+                        self.total_equity += xp_val_btc * eff_btc_price
 
                 # Check for Caution Mode (First 30 minutes)
                 if self.initial_equity is None:
@@ -984,12 +1105,12 @@ class MulticoreMasterBot:
                         await self.exchange.keep_user_data_stream_alive(self.listen_key)
 
                 self.save_balance(); self.save_state()
-                self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res)
+                self._render_dashboard(ts, macro_data, miro_data, asset_signals, yield_info, usdt_data, xaut_data, agent_res, pos_value=pos_value)
                 
                 # Relatorio Periodico (Heartbeat) - Cada 4 horas
                 if datetime.now() - self.last_status_report > timedelta(hours=4):
                     pos_count = sum(len(p) if isinstance(p, list) else 1 for p in self.positions.values() if p)
-                    status_msg = f"🛡️ <b>STATUS:</b> Equity R$ {self.total_equity:,.2f} | Saldo R$ {self.balance:,.2f} | Pos: {pos_count} | 🕒 {ts} | ✅ Normal"
+                    status_msg = f"🛡️ <b>STATUS:</b> Equity R$ {self.total_equity:,.2f} | Ativos R$ {pos_value:,.2f} | Saldo R$ {self.balance:,.2f} | Pos: {pos_count} | 🕒 {ts} | ✅ Normal"
                     self.notify_telegram(status_msg, title="STATUS")
                     self.last_status_report = datetime.now()
 
@@ -1009,6 +1130,10 @@ async def main(bot):
     asyncio.create_task(supervisor.start())
     if bot.enable_ai:
         asyncio.create_task(bot._train_initial_evo_pop())
+        # Pipeline de Retreino Automatizado (24h)
+        asyncio.create_task(bot._periodic_retrain_loop())
+        # Telemetria de Auditoria
+        asyncio.create_task(bot._update_audit_metrics_loop())
     if bot.enable_ai:
         asyncio.create_task(bot.oracle.start_loop())
     else:
@@ -1016,6 +1141,9 @@ async def main(bot):
     await bot.run_async()
 
 if __name__ == "__main__":
+    # Injeção de UVLOOP para máxima performance TCP/WebSocket
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='backtest')
     args = parser.parse_args()

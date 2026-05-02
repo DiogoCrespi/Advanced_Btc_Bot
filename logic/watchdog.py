@@ -21,10 +21,10 @@ class Watchdog(threading.Thread):
         self._is_running = True
         
         # Thresholds (Otimizados para Relatorio)
-        self.latency_threshold_ms = 1000  # 1.0 segundo (Alerta)
-        self.critical_latency_ms = 1500   # 1.5 segundos (Relatorio Critico)
-        self.ram_threshold_pct = 90.0     # 90% de uso
-        self.heartbeat_threshold_sec = 300 # 5 minutos sem tick
+        self.latency_threshold_ms = 2000  # Aumentado para 2s (Ambiente remoto)
+        self.critical_latency_ms = 4000   # Aumentado para 4s
+        self.ram_threshold_pct = 95.0     # 95% de uso
+        self.heartbeat_threshold_sec = 1200 # 20 minutos (Compativel com ciclos lentos de retreino + rede)
 
         self.last_latency = 0
         self.last_ram = 0
@@ -52,7 +52,7 @@ class Watchdog(threading.Thread):
             except Exception as e:
                 print(f"[WATCHDOG] Erro no loop de monitoramento: {e}")
             
-            time.sleep(600) # Monitoramento a cada 10 minutos (Otimizado)
+            time.sleep(60) # Monitoramento a cada 1 minuto
 
     def stop(self):
         self._is_running = False

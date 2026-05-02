@@ -87,7 +87,7 @@ class Ledger:
                     (asset, entry_price, signal, qty, cost, timestamp, order_id, is_shadow)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    asset, data['entry'], data['signal'], data['qty'], 
+                    asset, data['entry'], int(data['signal']), data['qty'], 
                     data['cost'], data['time'], data.get('order_id'),
                     1 if is_shadow else 0
                 ))

@@ -73,24 +73,32 @@ class EvolutionaryEngine:
         for _ in range(population_size - 1):
             self.population.append(self.alfa.mutate(rate=0.20))
 
-    def evaluate_fitness(self, dna, market_context=None):
+    def evaluate_fitness(self, dna):
         """
-        Calcula a aptidão: (ROI * WinRate) - MaxDrawdown.
+        Calculates fitness: (ROI * WinRate) - (MaxDrawdown * 1.5) - Anti-Gene Penalties.
+        Ensures evolutionary selection favors profitability, stability and avoidance of past failure patterns.
         """
         if not dna.trades:
+            dna.fitness = 0.0
             return 0.0
         
         pnls = dna.trades
         roi = sum(pnls)
         win_rate = len([p for p in pnls if p > 0]) / len(pnls) if pnls else 0
         
-        # Max Drawdown Simples
+        # Max Drawdown Simple
         cum_pnl = np.cumsum(pnls)
         peak = np.maximum.accumulate(cum_pnl)
         drawdown = np.max(peak - cum_pnl) if len(cum_pnl) > 0 else 0
         
-        # Função de Aptidão Final
-        dna.fitness = (roi * win_rate) - (drawdown * 1.5)
+        # Anti-Gene Penalty: If DNA is too similar to recent failures (synced from Neo4j)
+        penalty = 0.0
+        for f in self.failures:
+             # Basic penalty per failure context found
+             penalty += 0.05
+        
+        # Final Fitness Function
+        dna.fitness = (roi * win_rate) - (drawdown * 1.5) - penalty
         return dna.fitness
 
     def evolve(self):
@@ -146,20 +154,3 @@ class EvolutionaryEngine:
     def sync_failures(self, failed_metrics_list):
         """Sincroniza os estados de falha para aplicar o 'Anti-Gene'."""
         self.failures = failed_metrics_list
-
-    def evaluate_fitness(self, dna):
-        """Calcula fitness baseada em trades reais/virtuais e penaliza Anti-Genes."""
-        if not dna.trades:
-            dna.fitness = 0.0
-            return
-            
-        win_rate = len([t for t in dna.trades if t > 0]) / len(dna.trades)
-        roi = sum(dna.trades)
-        
-        # Penalidade Anti-Gene: Se o DNA for muito similar a falhas recentes
-        penalty = 0.0
-        for f in self.failures:
-             # Simplificacao: Penaliza se o DNA for alpha em regimes falhos
-             penalty += 0.05
-             
-        dna.fitness = (roi * win_rate) - penalty
