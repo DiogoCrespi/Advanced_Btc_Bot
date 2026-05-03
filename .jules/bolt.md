@@ -34,3 +34,8 @@
 ## 2024-05-24 - Replacing nested loops with numpy vectorized slicing in array lookaheads
 **Learning:** Found a major performance bottleneck in `tools/time_machine_simulator.py` where a nested `for` loop was used to look ahead in the `close_arr` to determine when Take Profit or Stop Loss conditions were hit. Iterating row-by-row in Python, especially in a nested loop simulating trading trajectories, causes O(N^2) complexity and is incredibly slow. By slicing the array (`future_closes = close_arr[j+1:]`), calculating all future returns at once vectorially (`price_rets = (future_closes / current_price) - 1.0`), and using `np.argmax()` combined with `.any()` on boolean conditions, the loop is completely eliminated. This achieves a significant speedup while preserving the exact first-hit logic.
 **Action:** When simulating future conditions over an array (like Stop Loss/Take Profit hits), avoid nested Python loops. Instead, slice the remaining array, apply vectorized operations, and use `np.argmax()` to locate the first occurrence of the condition.
+
+
+## 2024-05-24 - Replacing Pandas index datetime extractions with numpy arrays
+**Learning:** Found a performance bottleneck in `logic/features.py`'s `TemporalEncoder.apply` where computing trig encodings sequentially on index properties (e.g. `np.sin(2 * np.pi * df.index.hour / 24)`) causes substantial Series-alignment and memory allocation overhead.
+**Action:** Always prefer extracting properties to raw NumPy arrays first (e.g., `df.index.hour.values`), and pre-calculate any scaling constants to run math directly on those raw arrays rather than iterating or broadcasting Pandas Series.
