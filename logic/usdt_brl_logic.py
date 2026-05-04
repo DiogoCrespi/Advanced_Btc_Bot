@@ -22,9 +22,10 @@ class UsdtBrlLogic:
         df['sma50'] = close.rolling(window=50).mean()
 
         delta = close.diff()
-        gain = delta.where(delta > 0, 0.0).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0.0)).rolling(window=14).mean()
-        rs = gain / loss.replace(0, np.nan)
+        gain = pd.Series(np.maximum(delta.values, 0), index=df.index).rolling(window=14).mean()
+        loss = pd.Series(-np.minimum(delta.values, 0), index=df.index).rolling(window=14).mean()
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = gain / np.where(loss == 0, np.nan, loss)
         df['rsi'] = 100 - (100 / (1 + rs))
 
         std20 = close.rolling(window=20).std()
