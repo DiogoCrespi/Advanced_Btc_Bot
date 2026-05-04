@@ -67,14 +67,16 @@ class MLBrain:
             dt[f'feat_macd_{suf}'] = ema_f - ema_s
             # RSI
             delta = dt[p].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14*l).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14*l).mean()
-            rs = gain / loss.replace(0, np.nan)
+            gain = pd.Series(np.maximum(delta.values, 0), index=dt.index).rolling(window=14*l).mean()
+            loss = pd.Series(-np.minimum(delta.values, 0), index=dt.index).rolling(window=14*l).mean()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rs = gain / np.where(loss == 0, np.nan, loss)
             dt[f'feat_rsi_{suf}'] = 100 - (100 / (1 + rs))
             # Bollinger
             sma = dt[p].rolling(window=20*l).mean()
             std = dt[p].rolling(window=20*l).std()
-            dt[f'feat_bb_dist_{suf}'] = (dt[p] - sma) / (std.replace(0, np.nan))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                dt[f'feat_bb_dist_{suf}'] = (dt[p] - sma) / np.where(std == 0, np.nan, std)
 
         for scale, mult in [('1h', 1), ('4h', 4), ('1d', 24)]:
             add_ind(df, cl, mult, scale)
